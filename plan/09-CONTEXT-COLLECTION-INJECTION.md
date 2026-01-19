@@ -43,6 +43,7 @@ export interface ContextEntry {
   content: string;
   priority: ContextPriority;
   timestamp: number;
+  persistent?: boolean;         // If true, context is re-injected every turn
 }
 
 export interface PendingContext {
@@ -55,6 +56,7 @@ export interface RegisterContextOptions {
   source: string;
   content: string;
   priority?: ContextPriority;
+  persistent?: boolean;         // Whether to keep context after consumption
 }
 ```
 
@@ -112,18 +114,50 @@ export class ContextCollector {
     };
   }
 
-  /**
-   * Consume pending context (clears after returning)
-   */
+/**
+    * Consume pending context (clears non-persistent after returning)
+    */
   consume(sessionID: string): PendingContext {
-    const pending = this.getPending(sessionID);
-    if (!pending) {
+    const sessionMap = this.sessions.get(sessionID);
+    if (!sessionMap || sessionMap.size === 0) {
       return { entries: [], merged: "" };
     }
 
-    // Clear after consuming
-    this.sessions.delete(sessionID);
-    return pending;
+    const entries = Array.from(sessionMap.values());
+    const persistentEntries = entries.filter(e => e.persistent);
+    const nonPersistentEntries = entries.filter(e => !e.persistent);
+
+    // Clear only non-persistent entries
+    for (const entry of nonPersistentEntries) {
+      const key = `${entry.source}:${entry.id}`;
+      sessionMap.delete(key);
+    }
+
+    // If session map is empty (all were non-persistent), delete it
+    if (sessionMap.size === 0) {
+      this.sessions.delete(sessionID);
+    }
+
+    return {
+      entries: nonPersistentEntries, // Only return consumed entries
+      merged: this.mergeEntries(nonPersistentEntries),
+    };
+  }
+
+  /**
+   * Get persistent context for re-injection
+   */
+  getPersistent(sessionID: string): PendingContext | null {
+    const sessionMap = this.sessions.get(sessionID);
+    if (!sessionMap) return null;
+
+    const persistentEntries = Array.from(sessionMap.values()).filter(e => e.persistent);
+    if (persistentEntries.length === 0) return null;
+
+    return {
+      entries: persistentEntries,
+      merged: this.mergeEntries(persistentEntries),
+    };
   }
 
   /**

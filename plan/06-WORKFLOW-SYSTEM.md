@@ -282,15 +282,34 @@ export interface ConsolidatedReviewResult {
   divergentCount: number;
   totalIssues: number;
   hasBlockingIssues: boolean;
+  hasQuorum?: boolean;         // Whether minimum reviewers completed
+  completedReviews?: number;     // Number of reviews actually completed
+  minReviews?: number;          // Minimum needed for decision
 }
 
 export async function checkUserApproval(
   sessionId: string,
-  question: string
+  question: string,
+  options?: string[]
 ): Promise<GateResult> {
-  // This is handled by the agent via AskUserQuestion tool
+  // This is handled by the ask_user tool
+  // ask_user blocks until user responds
   // Returns true if user approved, false otherwise
-  return { passed: true, reason: "User approval pending via AskUserQuestion" };
+  
+  // Format the approval request for the ask_user tool
+  const approvalPrompt = options && options.length > 0
+    ? `${question}\n\nOptions: ${options.join(", ")}`
+    : question;
+  
+  return { 
+    passed: false, // Will be set by tool response
+    reason: `User approval requested: ${approvalPrompt}`,
+    data: { 
+      type: "user_approval",
+      question: approvalPrompt,
+      options,
+    }
+  };
 }
 
 /**
@@ -304,15 +323,25 @@ export async function checkUserApproval(
  * - Parsing fails (conservative approach)
  */
 export async function checkAllReviewersApprove(
-  sessionDir: string
+  sessionDir: string,
+  totalReviewers: number = 3
 ): Promise<GateResult> {
   const consolidatedPath = join(sessionDir, "consolidated-review.md");
   
   try {
     const content = await readFile(consolidatedPath, "utf-8");
-    const result = parseConsolidatedReview(content);
+    const result = parseConsolidatedReview(content, totalReviewers);
     
-    if (result.unanimousCount > 0) {
+    // If no quorum yet, return in-progress status
+    if (!result.hasQuorum) {
+      return {
+        passed: false,
+        reason: `Waiting for more reviews: ${result.completedReviews}/${result.minReviews} completed`,
+        data: { status: "waiting_for_quorum", ...result },
+      };
+    }
+    
+    if (result.hasBlockingIssues) {
       return {
         passed: false,
         reason: `${result.unanimousCount} UNANIMOUS issues require fixes before proceeding`,
@@ -340,21 +369,18 @@ export async function checkAllReviewersApprove(
 /**
  * Parse the consolidated review markdown to extract consensus counts.
  * 
- * Expected format (from consolidation agent):
- * ```
- * ## Consensus Summary
- * - Total unique issues: N
- * - UNANIMOUS issues: N (must fix before proceeding)
- * - STRONG consensus issues: N
- * - DIVERGENT issues: N
- * ```
+ * Supports dynamic thresholds:
+ * - UNANIMOUS: 100% agreement (blocking)
+ * - STRONG: ≥66% agreement (recommended)
+ * - DIVERGENT: <50% agreement (optional)
  */
-function parseConsolidatedReview(content: string): ConsolidatedReviewResult {
-  // Extract counts from the consensus summary section
+function parseConsolidatedReview(content: string, totalReviewers: number = 3): ConsolidatedReviewResult {
+  // Extract counts from consensus summary section
   const unanimousMatch = content.match(/UNANIMOUS issues:\s*(\d+)/i);
   const strongMatch = content.match(/STRONG consensus issues:\s*(\d+)/i);
   const divergentMatch = content.match(/DIVERGENT issues:\s*(\d+)/i);
   const totalMatch = content.match(/Total unique issues:\s*(\d+)/i);
+  const completedMatch = content.match(/Reviews completed:\s*(\d+)/i);
   
   const unanimousCount = unanimousMatch ? parseInt(unanimousMatch[1], 10) : 0;
   const strongCount = strongMatch ? parseInt(strongMatch[1], 10) : 0;
@@ -362,12 +388,25 @@ function parseConsolidatedReview(content: string): ConsolidatedReviewResult {
   const totalIssues = totalMatch ? parseInt(totalMatch[1], 10) : 
     unanimousCount + strongCount + divergentCount;
   
+  const completedReviews = completedMatch ? parseInt(completedMatch[1], 10) : totalReviewers;
+  
+  // Dynamic threshold: block only if unanimous issues exist
+  // Strong/DIVERGENT are non-blocking regardless of reviewer count
+  const hasBlockingIssues = unanimousCount > 0;
+  
+  // Additional check: if fewer than minimum reviewers completed, treat as in-progress
+  const minReviews = Math.max(2, Math.ceil(totalReviewers * 0.6));
+  const hasQuorum = completedReviews >= minReviews;
+  
   return {
     unanimousCount,
     strongCount,
     divergentCount,
     totalIssues,
-    hasBlockingIssues: unanimousCount > 0,
+    hasBlockingIssues: hasBlockingIssues && hasQuorum,
+    hasQuorum,
+    completedReviews,
+    minReviews,
   };
 }
 
@@ -542,6 +581,240 @@ export function getAgentsForWorkflow(workflowType: WorkflowType): AgentRouting {
         validation: [],
         review: ["reviewer"],
       };
+  }
+}
+```
+
+### 6.6 Git Integration and Workflow State Management
+
+<!-- =============================================================================
+WHY: Git Safety & Workflow State (Production Experience)
+================================================================================
+
+1. WORKFLOW RECOVERY
+   - Users take breaks, OpenCode restarts, or crashes happen
+   - Losing hours of progress is extremely frustrating
+   - Need formal mechanism to resume from exact phase
+
+2. GIT SAFETY
+   - Long workflows modify many files
+   - Working on main branch risks breaking the entire project
+   - Checkpoints provide recovery points
+
+3. STATE INJECTION
+   - Agent needs explicit state context to resume correctly
+   - Prevents "hallucination" about current phase
+   - Ensures no phase repetition
+
+============================================================================= -->
+
+```typescript
+// src/workflows/git-integration.ts
+import { execSync } from "child_process";
+
+export interface GitCheckpoint {
+  branch: string;
+  commitHash: string;
+  message: string;
+  timestamp: string;
+}
+
+/**
+ * Create a feature branch for workflow safety
+ */
+export async function createWorkflowBranch(
+  sessionId: string,
+  workflowType: string
+): Promise<GitCheckpoint> {
+  const branchName = `magnus-opus/${workflowType}/${sessionId}-${Date.now()
+    .toString(36)
+    .slice(0, 8)}`;
+  
+  try {
+    // Create and checkout feature branch
+    execSync(`git checkout -b ${branchName}`, { stdio: 'pipe' });
+    
+    // Initial commit with workflow metadata
+    const commitMessage = `Start Magnus Opus workflow: ${sessionId}
+Type: ${workflowType}
+Session: ${sessionId}`;
+    
+    execSync('git add .', { stdio: 'pipe' });
+    const commitHash = execSync(`git commit -m "${commitMessage}"`, { 
+      encoding: 'utf-8',
+      stdio: 'pipe'
+    }).trim();
+    
+    return {
+      branch: branchName,
+      commitHash,
+      message: commitMessage,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (error) {
+    throw new Error(`Failed to create workflow branch: ${error}`);
+  }
+}
+
+/**
+ * Create checkpoint after major milestones
+ */
+export async function createCheckpoint(
+  phase: string,
+  description: string
+): Promise<void> {
+  try {
+    // Stage all changes
+    execSync('git add .', { stdio: 'pipe' });
+    
+    // Create checkpoint commit
+    const commitMessage = `Magnus Opus checkpoint: ${phase}
+
+${description}`;
+    
+    execSync(`git commit -m "${commitMessage}"`, { 
+      encoding: 'utf-8',
+      stdio: 'pipe'
+    });
+    
+    console.log(`✅ Git checkpoint created: ${phase}`);
+  } catch (error) {
+    console.warn(`⚠️ Failed to create checkpoint: ${error}`);
+  }
+}
+
+/**
+ * Merge completed workflow back to main
+ */
+export async function mergeWorkflowBranch(
+  sessionId: string
+): Promise<void> {
+  try {
+    // Switch to main
+    execSync('git checkout main', { stdio: 'pipe' });
+    
+    // Merge workflow branch
+    execSync(`git merge magnus-opus/*/${sessionId} -m "Merge Magnus Opus workflow: ${sessionId}"`, {
+      stdio: 'pipe'
+    });
+    
+    // Delete workflow branch
+    execSync(`git branch -D magnus-opus/*/${sessionId}`, { stdio: 'pipe' });
+    
+    console.log(`✅ Workflow merged to main: ${sessionId}`);
+  } catch (error) {
+    throw new Error(`Failed to merge workflow branch: ${error}`);
+  }
+}
+```
+
+### 6.7 Workflow State Injection
+
+```typescript
+// src/workflows/state-injection.ts
+import type { ContextCollector } from "../features/context-injector";
+import { loadSessionMetadata } from "../sessions";
+
+/**
+ * Inject workflow state context for resumable workflows
+ */
+export function injectWorkflowState(
+  sessionId: string,
+  contextCollector: ContextCollector
+): void {
+  // Load session metadata
+  const metadata = loadSessionMetadata(sessionId);
+  if (!metadata) return;
+  
+  // Create persistent workflow state
+  const stateContext = `
+## Workflow State Injection
+
+**Session ID:** ${sessionId}
+**Status:** ${metadata.status}
+**Current Phase:** ${metadata.currentPhase || "None"}
+**Completed Phases:** ${metadata.completedPhases.join(", ") || "None"}
+**Total Progress:** ${metadata.completedPhases.length}/10
+
+**Next Action:**
+${metadata.currentPhase ? `Continue phase: ${metadata.currentPhase}` : "Start with requirements gathering"}
+
+**Critical Instructions:**
+1. DO NOT repeat completed phases
+2. Use existing artifacts in session directory
+3. Update phase status immediately after completion
+4. If resuming from crash, validate current state before proceeding
+`;
+  
+  // Register as persistent context (re-injected every turn)
+  contextCollector.register(sessionId, {
+    id: "workflow-state",
+    source: "state-injector",
+    content: stateContext,
+    priority: "critical",
+    persistent: true, // Re-inject every turn
+  });
+}
+```
+
+### 6.8 Phase Definition Updates
+
+```typescript
+// Add to IMPLEMENT_PHASES
+"requirements": {
+  // ... existing fields ...
+  gitCheckpoint?: boolean,  // Whether to create git checkpoint
+  stateInjection?: boolean,  // Whether to inject workflow state
+},
+
+"architecture": {
+  // ... existing fields ...
+  gitCheckpoint?: boolean,
+  stateInjection?: boolean,
+  prePhaseHook?: () => Promise<void>,  // Executed before phase starts
+},
+
+"implementation": {
+  // ... existing fields ...
+  gitCheckpoint?: boolean,
+  postPhaseHook?: () => Promise<void>,   // Executed after phase completes
+},
+
+// Add to phase execution logic
+export async function executePhase(
+  phaseName: string,
+  sessionDir: string,
+  contextCollector: ContextCollector,
+  config: MagnusOpusConfig
+): Promise<void> {
+  const phase = IMPLEMENT_PHASES[phaseName];
+  if (!phase) return;
+  
+  // Pre-phase: git checkpoint if enabled
+  if (phase.gitCheckpoint) {
+    await createCheckpoint(`before-${phaseName}`, `Starting phase: ${phaseName}`);
+  }
+  
+  // Pre-phase: state injection if enabled
+  if (phase.stateInjection) {
+    injectWorkflowState(extractSessionId(sessionDir), contextCollector);
+  }
+  
+  // Execute pre-phase hook
+  if (phase.prePhaseHook) {
+    await phase.prePhaseHook();
+  }
+  
+  // Execute actual phase...
+  
+  // Post-phase: git checkpoint if enabled
+  if (phase.gitCheckpoint) {
+    await createCheckpoint(`after-${phaseName}`, `Completed phase: ${phaseName}`);
+  }
+  
+  // Execute post-phase hook
+  if (phase.postPhaseHook) {
+    await phase.postPhaseHook();
   }
 }
 ```

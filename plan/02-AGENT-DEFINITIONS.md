@@ -73,6 +73,7 @@ const ORCHESTRATOR_PROMPT = `You are the Magnus Opus Orchestrator - a coordinato
 - ALWAYS delegate code work to specialists
 - Use TodoWrite to track all tasks
 - Follow the 4-Message Pattern for parallel execution
+- YIELD PROTOCOL: When calling 'ask_user', STOP GENERATING IMMEDIATELY. Do not simulate or hallucinate the user's response. Wait for the tool output.
 
 ## Available Specialists
 - architect: Architecture planning
@@ -114,7 +115,7 @@ export function createOrchestratorAgent(
       task: "allow",
       todowrite: "allow",
       todoread: "allow",
-      question: "allow",
+      ask_user: "allow", // Updated from 'question' to match tool name
     },
     thinking: {
       type: "enabled",

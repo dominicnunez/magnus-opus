@@ -62,6 +62,9 @@ export interface BackgroundTask {
   lastMsgCount?: number;         // Message count from last poll
   stablePolls?: number;          // Consecutive polls with no change
   lastActivityAt?: number;       // Timestamp of last activity
+  // Progressive notification fields
+  notifyOnCompletion?: boolean;  // Notify immediately when complete (vs batch)
+  notificationThreshold?: number;  // Notify when N tasks complete (default: all)
 }
 
 
@@ -80,6 +83,8 @@ export interface LaunchInput {
   parentMessageID: string;
   skillContent?: string;
   model?: { providerID: string; modelID: string };
+  notifyOnCompletion?: boolean;    // Immediate notification on completion
+  notificationThreshold?: number;    // Notify when this count of tasks complete
 }
 
 export class BackgroundManager {
@@ -98,7 +103,7 @@ export class BackgroundManager {
     this.registerProcessCleanup();
   }
 
-  async launch(input: LaunchInput): Promise<BackgroundTask> {
+async launch(input: LaunchInput): Promise<BackgroundTask> {
     const taskId = `bg_${randomUUID().slice(0, 8)}`;
 
     await this.concurrencyManager.acquire(input.agent);
@@ -123,6 +128,8 @@ export class BackgroundManager {
       status: "running",
       startedAt: new Date(),
       concurrencyKey: input.agent,
+      notifyOnCompletion: input.notifyOnCompletion ?? false,
+      notificationThreshold: input.notificationThreshold,
     };
 
     this.tasks.set(taskId, task);
@@ -144,7 +151,7 @@ export class BackgroundManager {
     }).catch((err) => {
       task.status = "error";
       task.error = err.message;
-      this.concurrencyManager.release(input.agent);
+      this.concurrencyManager.release(input.concurrencyKey);
     });
 
     // Start polling for completion
@@ -323,7 +330,7 @@ export class BackgroundManager {
     this.startPolling();
   }
 
-  private async completeTask(task: BackgroundTask, reason: string): Promise<void> {
+private async completeTask(task: BackgroundTask, reason: string): Promise<void> {
     if (task.status !== "running") return; // Prevent double-completion
 
     // Ensure session todos are complete before marking done
@@ -332,6 +339,45 @@ export class BackgroundManager {
     if (todos?.some((t) => t.status && t.status !== "completed" && t.status !== "cancelled")) {
       return;
     }
+    
+    task.status = "completed";
+    task.completedAt = new Date();
+
+    if (task.concurrencyKey) {
+      this.concurrencyManager.release(task.concurrencyKey);
+    }
+    
+    // Progressive notification logic
+    const shouldNotifyImmediately = task.notifyOnCompletion;
+    const pending = this.pendingByParent.get(task.parentSessionID) ?? new Set<string>();
+    pending.delete(task.id);
+    this.pendingByParent.set(task.parentSessionID, pending);
+
+    // Check threshold for notification
+    const threshold = task.notificationThreshold ?? pending.size + 1; // Default: notify when all done
+    const remaining = threshold - (pending.size + 1);
+    
+    if (shouldNotifyImmediately || remaining <= 0) {
+      // Immediate notification
+      await this.notifyParent(task.parentSessionID, [task], "immediate");
+    } else if (task.notificationThreshold && task.notificationThreshold > 1) {
+      // Threshold notification (e.g., "2 of 3 reviews complete")
+      await this.notifyParent(task.parentSessionID, [task], "progress", {
+        completed: threshold - remaining,
+        total: threshold,
+      });
+    } else {
+      // Queue for batch notification
+      const notifications = this.notifications.get(task.parentSessionID) ?? [];
+      notifications.push(task);
+      this.notifications.set(task.parentSessionID, notifications);
+
+      if (pending.size === 0) {
+        await this.notifyParent(task.parentSessionID, notifications, "batch");
+        this.notifications.delete(task.parentSessionID);
+      }
+    }
+  }
     
     task.status = "completed";
     task.completedAt = new Date();
@@ -356,9 +402,28 @@ export class BackgroundManager {
     }
   }
 
-  private async notifyParent(parentSessionID: string, tasks: BackgroundTask[]): Promise<void> {
+  private async notifyParent(
+    parentSessionID: string, 
+    tasks: BackgroundTask[], 
+    type: "immediate" | "progress" | "batch",
+    progress?: { completed: number; total: number }
+  ): Promise<void> {
     const summaries = tasks.map((task) => `- ${task.description}: ${task.status}`).join("\n");
-    const content = `Background tasks complete (${tasks.length}).\n${summaries}`;
+    
+    let content: string;
+    
+    switch (type) {
+      case "immediate":
+        content = `Background task complete:\n${summaries}`;
+        break;
+      case "progress":
+        content = `Background tasks progress (${progress?.completed}/${progress?.total}):\n${summaries}`;
+        break;
+      case "batch":
+      default:
+        content = `Background tasks complete (${tasks.length}):\n${summaries}`;
+        break;
+    }
 
     await this.client.session.prompt({
       path: { id: parentSessionID },

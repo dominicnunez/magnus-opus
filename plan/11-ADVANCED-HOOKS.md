@@ -125,6 +125,96 @@ export function createMessagesTransformHook(deps: {
     }
   };
 }
+
+#### Keyword Detector Hook (Production)
+
+Detects keywords in the incoming message and registers context *before* consumption.
+
+```typescript
+// src/hooks/keyword-detector.ts
+import type { ContextCollector } from "../features/context-injector";
+
+// Keywords that trigger special behavior
+const ULTRAWORK_KEYWORDS = ["ultrawork", "ulw"];
+
+export function createKeywordDetectorHook(deps: {
+  contextCollector?: ContextCollector;
+}) {
+  const { contextCollector } = deps;
+  const detectedSessions = new Set<string>();
+
+  return async (
+    input: {},
+    output: {
+      messages: Array<{
+        info: { id: string; sessionID: string; role: string };
+        parts: Array<{ type: string; text?: string }>;
+      }>;
+    }
+  ): Promise<void> => {
+    if (!contextCollector) return;
+
+    // Analyze last user message
+    const lastUserMessage = output.messages.findLast((m) => m.info.role === "user");
+    if (!lastUserMessage) return;
+
+    const sessionID = lastUserMessage.info.sessionID;
+    const messageText = lastUserMessage.parts
+      .filter((p) => p.type === "text" && p.text)
+      .map((p) => p.text)
+      .join("\n")
+      .toLowerCase();
+
+    // Check for ultrawork keywords
+    const hasUltrawork = ULTRAWORK_KEYWORDS.some((kw) => messageText.includes(kw));
+
+    if (hasUltrawork && !detectedSessions.has(sessionID)) {
+      detectedSessions.add(sessionID);
+
+      const ultraworkContext = `
+## ULTRAWORK Mode Active
+
+You are now operating in ULTRAWORK mode. This means:
+
+1. **Aggressive Parallelism**: Use the 4-Message Pattern for all multi-agent work
+   - Message 1: Preparation (Bash only)
+   - Message 2: Parallel execution (Task only - all agents launch simultaneously)
+   - Message 3: Consolidation
+   - Message 4: Present results
+
+2. **Background Agents**: Delegate exploration and research to background agents
+   - Use \`run_in_background: true\` for independent tasks
+   - Don't wait for results unless dependencies exist
+
+3. **TodoWrite Discipline**: 
+   - Create comprehensive todo list upfront
+   - Update status IMMEDIATELY after each step
+   - Never leave tasks half-done
+
+4. **Context Efficiency**:
+   - Use file-based delegation for large outputs
+   - Return brief summaries (2-5 sentences) from sub-agents
+   - Read output files only when needed
+
+5. **Quality Gates**:
+   - User approval after architecture planning
+   - Validation gates with iteration loops
+   - Multi-model review when appropriate
+
+Work relentlessly until ALL tasks are complete.
+`;
+
+      // Register with ContextCollector (Persistent Context)
+      contextCollector.register(sessionID, {
+        id: "ultrawork-mode",
+        source: "keyword-detector",
+        content: ultraworkContext,
+        priority: "critical",
+        persistent: true, // Keep active for session duration
+      });
+    }
+  };
+}
 ```
 
 ### 11.2 Chat Message Handler (CRITICAL - was missing from original plan)
@@ -191,9 +281,6 @@ export interface ChatMessageHandlerDeps {
 // Keywords that trigger special behavior
 const ULTRAWORK_KEYWORDS = ["ultrawork", "ulw"];
 
-// Track sessions where keywords were detected
-const keywordDetectedSessions = new Set<string>();
-
 // Create gate instance (singleton per plugin)
 const firstMessageVariantGate = createFirstMessageVariantGate();
 
@@ -206,7 +293,7 @@ export function createChatMessageHandler(deps: ChatMessageHandlerDeps) {
   return async (input: ChatMessageInput, output: ChatMessageOutput): Promise<void> => {
     const { sessionID, agent } = input;
 
-    // 1. Apply agent variant on first message only
+    // Apply agent variant on first message only
     if (firstMessageVariantGate.shouldOverride(sessionID)) {
       const variant = resolveAgentVariant(pluginConfig, agent);
       if (variant !== undefined) {
@@ -214,10 +301,6 @@ export function createChatMessageHandler(deps: ChatMessageHandlerDeps) {
       }
       firstMessageVariantGate.markApplied(sessionID);
     }
-
-    // 2. Detect keywords in user message
-    const messageText = extractMessageText(output);
-    detectKeywords(sessionID, messageText, output);
   };
 }
 
@@ -247,93 +330,9 @@ function resolveAgentVariant(
 }
 
 /**
- * Extract text content from message parts
- */
-function extractMessageText(output: ChatMessageOutput): string {
-  if (!output.parts) return "";
-  
-  return output.parts
-    .filter((p) => p.type === "text" && p.text)
-    .map((p) => p.text)
-    .join("\n")
-    .trim();
-}
-
-/**
- * Detect special keywords in message and inject context
- */
-function detectKeywords(
-  sessionID: string,
-  messageText: string,
-  output: ChatMessageOutput
-): void {
-  const lowerText = messageText.toLowerCase();
-
-  // Check for ultrawork keywords
-  const hasUltrawork = ULTRAWORK_KEYWORDS.some((kw) => lowerText.includes(kw));
-  
-  if (hasUltrawork && !keywordDetectedSessions.has(sessionID)) {
-    keywordDetectedSessions.add(sessionID);
-    
-    // Inject ultrawork context into the message
-    injectUltraworkContext(output);
-  }
-}
-
-/**
- * Inject ultrawork orchestration context
- */
-function injectUltraworkContext(output: ChatMessageOutput): void {
-  const ultraworkContext = `
-<system-reminder>
-## ULTRAWORK Mode Active
-
-You are now operating in ULTRAWORK mode. This means:
-
-1. **Aggressive Parallelism**: Use the 4-Message Pattern for all multi-agent work
-   - Message 1: Preparation (Bash only)
-   - Message 2: Parallel execution (Task only - all agents launch simultaneously)
-   - Message 3: Consolidation
-   - Message 4: Present results
-
-
-2. **Background Agents**: Delegate exploration and research to background agents
-   - Use \`run_in_background: true\` for independent tasks
-   - Don't wait for results unless dependencies exist
-
-3. **TodoWrite Discipline**: 
-   - Create comprehensive todo list upfront
-   - Update status IMMEDIATELY after each step
-   - Never leave tasks half-done
-
-4. **Context Efficiency**:
-   - Use file-based delegation for large outputs
-   - Return brief summaries (2-5 sentences) from sub-agents
-   - Read output files only when needed
-
-5. **Quality Gates**:
-   - User approval after architecture planning
-   - Validation gates with iteration loops
-   - Multi-model review when appropriate
-
-Work relentlessly until ALL tasks are complete.
-</system-reminder>
-`;
-
-  // Append context to message parts
-  if (output.parts) {
-    output.parts.push({
-      type: "text",
-      text: ultraworkContext,
-    });
-  }
-}
-
-/**
  * Clear session state (called on session.deleted event)
  */
 export function clearChatMessageState(sessionID: string): void {
-  keywordDetectedSessions.delete(sessionID);
   firstMessageVariantGate.clear(sessionID);
 }
 ```

@@ -334,13 +334,14 @@ Create review workspace and gather context:
 mkdir -p ${sessionDir}/reviews
 \`\`\`
 
-## MESSAGE 2: Parallel Execution (Task Only)
+## MESSAGE 2: Parallel Execution (Background Tasks Only)
 
-Launch ALL reviewers in a SINGLE message - they run simultaneously!
+Launch ALL reviewers in a SINGLE message using background_task - they run simultaneously!
 ${models.map((model, i) => `
-Task: reviewer
-  Model: ${model}
-  Prompt: "Review the code at: ${args.path}
+/background_task
+  agent: reviewer
+  model: ${model}
+  prompt: "Review the code at: ${args.path}
 
 Provide a structured review with:
 - Verdict: APPROVED | NEEDS_REVISION | MAJOR_CONCERNS
@@ -348,15 +349,44 @@ Provide a structured review with:
 - Specific file:line references
 - Suggested fixes
 
-Write your review to: ${sessionDir}/reviews/${model.replace(/\//g, "-")}.md"
+Write your review to: ${sessionDir}/reviews/${model.replace(/\//g, "-")}.md""
+  description: "Code review: ${model} on ${args.path}"
+  run_in_background: true
 `).join("\n---\n")}
 
-## MESSAGE 3: Consolidation (Task Only)
+## MESSAGE 3: Progressive Consolidation (Auto-Trigger)
 
-After all reviews complete, launch consolidation:
+Set up a consolidation watcher that starts when N≥2 reviews complete:
 
 Task: reviewer
-  Prompt: "Consolidate the ${models.length} code reviews in ${sessionDir}/reviews/
+  Prompt: "Watch for ${models.length} code reviews in ${sessionDir}/reviews/
+
+When reviews complete:
+1. Check consensus every 30 seconds
+2. Start consolidation when >=${Math.max(2, Math.ceil(models.length * 0.6))} reviews complete
+3. Apply consensus analysis for EACH issue found:
+   - **UNANIMOUS**: All completed models flag this issue → MUST FIX (blocking)
+   - **STRONG**: ${Math.ceil(models.length * 0.7)}+ models agree → RECOMMENDED
+   - **DIVERGENT**: Only 1 model flags → OPTIONAL (review before fixing)
+
+Output format for ${sessionDir}/consolidated-review.md:
+
+## Consensus Summary
+- Total unique issues: N
+- UNANIMOUS issues: N (must fix before proceeding)
+- STRONG consensus issues: N
+- DIVERGENT issues: N
+
+## UNANIMOUS Issues (MUST FIX)
+[List issues flagged by ALL reviewers]
+
+## STRONG Consensus Issues (RECOMMENDED)
+[List issues flagged by 2/3+ reviewers]
+
+## DIVERGENT Issues (OPTIONAL)
+[List issues flagged by only 1 reviewer - may be false positives]
+
+Continue watching and update consolidated review as more reviewers finish."
 
 Apply consensus analysis for EACH issue found:
 - **UNANIMOUS**: All ${models.length} models flag this issue → MUST FIX (blocking)
@@ -433,6 +463,47 @@ With session_id: Deletes that session`,
     }
   },
 });
+
+### 3.11 /ask_user Command
+
+```typescript
+// src/tools/ask-user.ts
+import { tool } from "@opencode-ai/plugin";
+import type { MagnusOpusConfig } from "../config/schema";
+
+export const askUser = tool({
+  description: `Ask the user a question and wait for their response.
+
+This is a blocking tool that pauses workflow execution until the user responds.
+Use for user approval gates, clarifications, or critical decisions.
+
+Usage: /ask_user <question> [--options=<option1,option2>]
+
+The tool will:
+1. Present the question clearly
+2. Wait for user input
+3. Return the user's response to continue workflow`,
+  
+  args: {
+    question: tool.schema.string().describe("Question to ask the user"),
+    options: tool.schema.array(tool.schema.string()).optional()
+      .describe("List of valid options (creates choice prompt)"),
+    timeout: tool.schema.number().optional()
+      .describe("Timeout in seconds (default: 60)"),
+  },
+
+  async execute(args, ctx) {
+    // This is implemented by the plugin's orchestration logic
+    // The tool call triggers a blocking user prompt in the UI
+    // The response is returned to the agent to continue workflow
+    
+    return `🤔 User Question: ${args.question}
+${args.options ? `\nOptions: ${args.options.join(", ")}` : ""}
+
+Waiting for user response...`;
+  },
+});
+```
 ```
 
 ### 3.7 /debug Command
@@ -785,7 +856,7 @@ Present summary with documentation location.
 });
 ```
 
-### 3.10 /help Command
+### 3.15 /help Command
 
 ```typescript
 // src/tools/help.ts
@@ -818,6 +889,8 @@ export const help = tool({
 | /debug | Systematic debugging with root cause analysis |
 | /architect | Standalone architecture planning |
 | /doc | Documentation generation |
+| /resume | Resume interrupted workflow |
+| /ask_user | Ask user question (blocks workflow) |
 | /help | This documentation |`);
     }
 
@@ -897,6 +970,8 @@ export const builtinTools = {
   help,
   "background_task": backgroundTask,
   "background_output": backgroundOutput,
+  "ask_user": askUser,
+  resume,
   // delegate_task is created dynamically with BackgroundManager dependency
 };
 
@@ -911,6 +986,8 @@ export * from "./doc";
 export * from "./help";
 export * from "./background-task";
 export * from "./background-output";
+export * from "./ask-user";
+export * from "./resume";
 export { createDelegateTask } from "./delegate-task";
 ```
 
@@ -1088,6 +1165,77 @@ If session_id is omitted, returns the most recent background task.`,
     // Actual implementation in src/index.ts manages background session tracking
     
     return `Fetching background output for session: ${args.session_id || "(most recent)"}`;
+  },
+});
+```
+
+### 3.14 /resume Command
+
+```typescript
+// src/tools/resume.ts
+import { tool } from "@opencode-ai/plugin";
+import { getSessionDir, loadSessionMetadata } from "../sessions";
+
+export const resume = tool({
+  description: `Resume a previously interrupted workflow session.
+
+Usage: /resume <session_id>
+
+Restores workflow state and continues from the last completed phase.
+This allows recovery from crashes, restarts, or taking breaks during long workflows.`,
+  
+  args: {
+    session_id: tool.schema.string()
+      .describe("Session ID to resume"),
+  },
+  
+  async execute(args, ctx) {
+    ctx.metadata?.({
+      title: `/resume: ${args.session_id}`,
+      metadata: { sessionId: args.session_id },
+    });
+    
+    // Load session metadata
+    const metadata = await loadSessionMetadata(args.session_id);
+    
+    if (!metadata) {
+      return `❌ Session not found: ${args.session_id}`;
+    }
+    
+    if (metadata.status === "completed") {
+      return `ℹ️ Session already completed: ${args.session_id}`;
+    }
+    
+    const sessionDir = getSessionDir(args.session_id);
+    
+    // Inject workflow state as persistent context
+    const workflowState = `
+## Workflow Resume: ${args.session_id}
+
+**Current Status:** ${metadata.status}
+**Current Phase:** ${metadata.currentPhase || "Unknown"}
+**Completed Phases:** ${metadata.completedPhases.join(", ") || "None"}
+**Last Updated:** ${metadata.updatedAt}
+
+**Instructions:**
+1. Continue from current phase
+2. Do not repeat completed phases
+3. Use existing artifacts in ${sessionDir}
+4. Update phase status immediately after completion
+`;
+    
+    return `✅ Resuming session: ${args.session_id}
+
+**Status:** ${metadata.status}
+**Current Phase:** ${metadata.currentPhase || "Unknown"}
+**Progress:** ${metadata.completedPhases.length}/10 phases
+
+Session directory: ${sessionDir}
+
+<system-instruction>
+Continue the workflow from the current phase.
+Use existing artifacts and do not repeat completed work.
+</system-instruction>`;
   },
 });
 ```

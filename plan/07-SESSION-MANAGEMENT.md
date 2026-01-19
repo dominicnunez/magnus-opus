@@ -92,9 +92,31 @@ export async function createSessionDirectory(
   // Create main session directory
   mkdirSync(sessionDir, { recursive: true });
 
-  // Create subdirectories
-  mkdirSync(join(sessionDir, "reviews", "plan-review"), { recursive: true });
-  mkdirSync(join(sessionDir, "reviews", "code-review"), { recursive: true });
+  // Create phase-based subdirectories with timestamps
+  const now = new Date();
+  const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  
+  // Phase directories
+  mkdirSync(join(sessionDir, `${timestamp}_requirements`), { recursive: true });
+  mkdirSync(join(sessionDir, `${timestamp}_architecture`), { recursive: true });
+  mkdirSync(join(sessionDir, `${timestamp}_implementation`), { recursive: true });
+  mkdirSync(join(sessionDir, `${timestamp}_reviews`), { recursive: true });
+  
+  // Review subdirectories
+  mkdirSync(join(sessionDir, `${timestamp}_reviews`, "plan-review"), { recursive: true });
+  mkdirSync(join(sessionDir, `${timestamp}_reviews`, "code-review"), { recursive: true });
+  mkdirSync(join(sessionDir, `${timestamp}_reviews`, "design-validation"), { recursive: true });
+
+  // Create symlink for current phase (always points to latest)
+  try {
+    const currentPath = join(sessionDir, "current");
+    if (existsSync(currentPath)) {
+      rmSync(currentPath);
+    }
+    symlinkSync(`${timestamp}_architecture`, currentPath);
+  } catch {
+    // Ignore symlink errors (Windows without admin rights)
+  }
 
   return sessionDir;
 }
