@@ -31,6 +31,2649 @@ Magnus Opus follows the **oh-my-opencode pattern** for plugin integration.
 
 Rationale and scope decisions live in `DECISIONS.md` (Decisions 004–005).
 
+---
+
+## 1. Platform Overview
+
+<!-- =============================================================================
+WHY: Platform Differences (btca research: oh-my-opencode, mag-cp)
+================================================================================
+
+1. NO PROXY_MODE
+   - MAG used PROXY_MODE for model switching via prompt injection
+   - OpenCode provides native `model` parameter in AgentConfig
+   - All agents can specify their model directly
+
+2. PERMISSION-ONLY
+   - MAG used `tools: { write: false }` format (deprecated)
+   - OpenCode uses `permission: { write: "deny" }` format
+   - Permissions: "allow" | "ask" | "deny"
+
+3. NATIVE SESSION API
+   - OpenCode provides `ctx.client.session.todo()` for reading todo state
+   - No need for internal tracking or state management
+   - Session methods: create, prompt, get, todo, list, delete, fork, abort
+
+4. CONFIG HOOK MUTATION
+   - Agents/MCPs injected via config hook by mutating config object
+   - Pattern: `config.agent = { ...builtins, ...existing }`
+   - Not via return values like `{ agent: {...} }`
+
+============================================================================= -->
+
+### 1.1 OpenCode vs MAG (Claude Code) Key Differences
+
+| Aspect | MAG (Claude Code) | OpenCode (Magnus Opus) |
+|--------|-------------------|------------------------|
+| Model Selection | PROXY_MODE prompt hack | Native `model` parameter |
+| Tool Restrictions | `tools: { write: false }` | `permission: { write: "deny" }` |
+| Todo State | Internal tracking | Native `session.todo()` API |
+| Agent Registration | Return `agent:` property | Mutate `config.agent` |
+| MCP Registration | Return `mcp:` property | Mutate `config.mcp` |
+| Plugin Type | `Plugin<PluginConfig>` | `Plugin` (no generic) |
+
+### 1.2 OpenCode PluginInput Context
+
+The plugin receives a context object with these properties:
+
+```typescript
+interface PluginInput {
+  client: OpencodeClient;      // API client for session/message operations
+  directory: string;           // Working directory path
+  project: string;             // Project name
+  worktree: string;            // Git worktree path
+  serverUrl: string;           // OpenCode server URL
+  $: ShellHelper;              // Shell execution helper
+}
+```
+
+### 1.3 Plugin Entry Point Pattern
+
+```typescript
+import type { Plugin } from "@opencode-ai/plugin";
+
+const MagnusOpusPlugin: Plugin = async (ctx) => {
+  // Load plugin config
+  const pluginConfig = await loadPluginConfig(ctx.directory);
+  
+  return {
+    // Inject agents and MCPs via config mutation
+    config: async (config) => {
+      config.agent = { ...createBuiltinAgents(pluginConfig), ...config.agent };
+      config.mcp = { ...createBuiltinMcps(pluginConfig), ...config.mcp };
+    },
+    
+    // Register custom tools
+    tool: builtinTools,
+    
+    // Handle events
+    event: async (input) => { /* ... */ },
+    
+    // Tool lifecycle hooks
+    "tool.execute.before": async (input, output) => { /* ... */ },
+    "tool.execute.after": async (input, output) => { /* ... */ },
+    
+    // Message hooks
+    "chat.message": async (input, output) => { /* ... */ },
+    
+    // Experimental hooks
+    "experimental.chat.system.transform": async (input, output) => { /* ... */ },
+    "experimental.chat.messages.transform": async (input, output) => { /* ... */ },
+  };
+};
+
+export default MagnusOpusPlugin;
+```
+
+### 1.4 Type Imports
+
+```typescript
+// From OpenCode SDK
+import type { Plugin, AgentConfig } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin";
+
+// Zod for config validation
+import { z } from "zod";
+```
+
+---
+
+## 2. Agent Definitions
+
+<!-- =============================================================================
+WHY: Agent Architecture (btca research: oh-my-opencode sisyphus agent)
+================================================================================
+
+1. ROLE SEPARATION
+   - Orchestrator coordinates but NEVER writes code
+   - Specialists (developer, backend) do implementation
+   - Validators (designer, reviewer) do read-only review
+   - This prevents role confusion and ensures quality gates work
+
+2. MODEL SPECIALIZATION
+   - Claude Opus for orchestration (best reasoning)
+   - Claude Sonnet for implementation (best coding)
+   - Gemini for design validation (strong multimodal)
+   - Claude Haiku for fast utility tasks (cost-effective)
+   - Grok for exploration (fast, cheap, good at search)
+
+3. PERMISSION MODEL
+   - "allow" - Tool available without confirmation
+   - "ask" - Prompt user before use
+   - "deny" - Tool not available
+   - Orchestrator has write/edit denied (read-only coordination)
+
+============================================================================= -->
+
+### 2.1 AgentConfig Interface
+
+```typescript
+// src/agents/types.ts
+import type { AgentConfig } from "@opencode-ai/plugin";
+
+export type AgentMode = "primary" | "subagent" | "all";
+export type PermissionValue = "allow" | "ask" | "deny";
+
+export interface MagnusAgentConfig extends AgentConfig {
+  description: string;
+  mode: AgentMode;
+  model: string;
+  prompt: string;
+  color?: string;
+  permission?: Record<string, PermissionValue>;
+  temperature?: number;
+  top_p?: number;
+  maxTokens?: number;
+  thinking?: { type: "enabled" | "disabled"; budgetTokens?: number };
+  skills?: string[];
+}
+```
+
+### 2.2 Agent Definitions
+
+#### 2.2.1 Orchestrator Agent
+
+```typescript
+// src/agents/orchestrator.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_ORCHESTRATOR_MODEL = "anthropic/claude-opus-4";
+
+const ORCHESTRATOR_PROMPT = `You are the Magnus Opus Orchestrator - a coordinator who NEVER writes code directly.
+
+## Core Responsibilities
+1. Detect workflow type (UI_FOCUSED, API_FOCUSED, MIXED)
+2. Create and manage sessions
+3. Delegate to specialized agents via Task tool
+4. Enforce quality gates
+5. Report progress to user
+
+## Critical Constraints
+- NEVER use Write or Edit tools
+- ALWAYS delegate code work to specialists
+- Use TodoWrite to track all tasks
+- Follow the 4-Message Pattern for parallel execution
+
+## Available Specialists
+- architect: Architecture planning
+- developer: SvelteKit implementation
+- backend: Convex implementation
+- designer: Design validation (read-only)
+- ui-developer: UI fixes
+- reviewer: Code review
+- tester: Browser testing
+- explorer: Codebase search
+- cleaner: Artifact cleanup
+
+## Workflow Detection
+- UI_FOCUSED: component, page, layout, design, Figma, UI, styling
+- API_FOCUSED: query, mutation, action, schema, Convex, database, API
+- MIXED: Both UI and API keywords present`;
+
+export function createOrchestratorAgent(
+  model: string = DEFAULT_ORCHESTRATOR_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Coordinates workflows, never writes code directly",
+    mode: "primary",
+    model,
+    prompt: ORCHESTRATOR_PROMPT,
+    color: "#9333EA", // Purple
+    permission: {
+      write: "deny",
+      edit: "deny",
+      multiedit: "deny",
+      bash: "allow",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      task: "allow",
+      todowrite: "allow",
+      todoread: "allow",
+      question: "allow",
+    },
+    thinking: {
+      type: "enabled",
+      budgetTokens: 32000,
+    },
+  };
+}
+
+export const orchestratorAgent = createOrchestratorAgent();
+```
+
+#### 2.2.2 Architect Agent
+
+```typescript
+// src/agents/architect.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_ARCHITECT_MODEL = "anthropic/claude-sonnet-4";
+
+const ARCHITECT_PROMPT = `You are the Magnus Opus Architect - a technical planner for SvelteKit + Convex projects.
+
+## Responsibilities
+1. Analyze requirements thoroughly
+2. Ask clarifying questions (gap analysis)
+3. Design data models (Convex schema)
+4. Design API contracts (queries, mutations, actions)
+5. Plan component structure (SvelteKit routes)
+6. Identify risks and dependencies
+7. Create implementation phases
+
+## Output Artifacts
+Write to the session directory:
+- implementation-plan.md - Comprehensive plan
+- quick-reference.md - Checklist for developers
+
+## Planning Template
+1. **Understanding** - Restate requirements
+2. **Gap Analysis** - Questions for clarity
+3. **Data Model** - Convex schema design
+4. **API Design** - Function signatures
+5. **Component Design** - File structure
+6. **Implementation Phases** - Ordered steps
+7. **Risks** - Potential issues
+8. **Time Estimate** - Conservative hours`;
+
+export function createArchitectAgent(
+  model: string = DEFAULT_ARCHITECT_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Creates comprehensive implementation plans",
+    mode: "subagent",
+    model,
+    prompt: ARCHITECT_PROMPT,
+    color: "#2563EB", // Blue
+    permission: {
+      write: "allow",
+      edit: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+    },
+    temperature: 0.3, // Low for consistent planning
+    skills: ["quality-gates"],
+  };
+}
+
+export const architectAgent = createArchitectAgent();
+```
+
+#### 2.2.3 Developer Agent (SvelteKit)
+
+```typescript
+// src/agents/developer.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_DEVELOPER_MODEL = "anthropic/claude-sonnet-4";
+
+const DEVELOPER_PROMPT = `You are the Magnus Opus Developer - a SvelteKit expert.
+
+## Stack
+- SvelteKit 2
+- Svelte 5 (runes: $state, $derived, $effect, $props)
+- TypeScript (strict mode)
+- Tailwind CSS v4
+- shadcn-svelte components
+
+## Responsibilities
+1. Implement frontend components and pages
+2. Follow the implementation plan
+3. Use Svelte 5 runes exclusively
+4. Integrate with Convex via convex-svelte
+5. Handle errors gracefully
+
+## Key Patterns
+- Use $state() for reactive state
+- Use $derived() for computed values
+- Use $effect() for side effects
+- Use $props() for component props
+- Use load functions in +page.server.ts
+- Use form actions for mutations`;
+
+export function createDeveloperAgent(
+  model: string = DEFAULT_DEVELOPER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "SvelteKit frontend implementation",
+    mode: "subagent",
+    model,
+    prompt: DEVELOPER_PROMPT,
+    color: "#F97316", // Orange
+    permission: {
+      write: "allow",
+      edit: "allow",
+      multiedit: "allow",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+    },
+    skills: ["sveltekit", "shadcn-svelte"],
+  };
+}
+
+export const developerAgent = createDeveloperAgent();
+```
+
+#### 2.2.4 Backend Agent (Convex)
+
+```typescript
+// src/agents/backend.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_BACKEND_MODEL = "anthropic/claude-sonnet-4";
+
+const BACKEND_PROMPT = `You are the Magnus Opus Backend Agent - a Convex expert.
+
+## Stack
+- Convex (backend-as-a-service)
+- TypeScript
+- Convex validators (v.string(), v.id(), etc.)
+
+## Responsibilities
+1. Implement Convex schema
+2. Create queries (real-time, read operations)
+3. Create mutations (write operations, transactional)
+4. Create actions (external API calls, non-deterministic)
+5. Create internal functions (server-to-server)
+6. Set up cron jobs if needed
+
+## Key Patterns
+- Always use indexes for queries
+- Validate in handlers, not just schema
+- Use internal functions for sensitive operations
+- Handle errors explicitly with custom types
+- Timestamp everything (createdAt, updatedAt)`;
+
+export function createBackendAgent(
+  model: string = DEFAULT_BACKEND_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Convex backend implementation",
+    mode: "subagent",
+    model,
+    prompt: BACKEND_PROMPT,
+    color: "#10B981", // Emerald
+    permission: {
+      write: "allow",
+      edit: "allow",
+      multiedit: "allow",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+    },
+    skills: ["convex"],
+  };
+}
+
+export const backendAgent = createBackendAgent();
+```
+
+#### 2.2.5 Designer Agent
+
+```typescript
+// src/agents/designer.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_DESIGNER_MODEL = "google/gemini-2.5-pro";
+
+const DESIGNER_PROMPT = `You are the Magnus Opus Designer - a UI/UX validator.
+
+## Responsibilities
+1. Compare implementation against Figma designs
+2. Validate visual fidelity
+3. Check spacing, colors, typography
+4. Verify responsive behavior
+5. Report issues for ui-developer to fix
+
+## Critical Constraint
+You do NOT write code. You only review and report issues.
+
+## Validation Checklist
+- [ ] Layout matches design
+- [ ] Colors are correct
+- [ ] Typography is correct
+- [ ] Spacing is correct
+- [ ] Components are complete
+- [ ] Responsive breakpoints work
+- [ ] Hover/focus states work
+
+## Output Format
+Write to: design-validation.md
+Include: Screenshot comparisons, issue list with severity`;
+
+export function createDesignerAgent(
+  model: string = DEFAULT_DESIGNER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Validates UI against Figma designs (read-only)",
+    mode: "subagent",
+    model,
+    prompt: DESIGNER_PROMPT,
+    color: "#EC4899", // Pink
+    permission: {
+      write: "allow", // Only for writing reports
+      edit: "deny",
+      multiedit: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+      webfetch: "allow",
+    },
+  };
+}
+
+export const designerAgent = createDesignerAgent();
+```
+
+#### 2.2.6 UI Developer Agent
+
+```typescript
+// src/agents/ui-developer.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_UI_DEVELOPER_MODEL = "anthropic/claude-sonnet-4";
+
+const UI_DEVELOPER_PROMPT = `You are the Magnus Opus UI Developer - a specialist in fixing UI issues.
+
+## Responsibilities
+1. Read design-validation.md for issues
+2. Fix spacing, colors, typography issues
+3. Correct layout problems
+4. Implement missing hover/focus states
+5. Fix responsive breakpoints
+
+## Input
+Read: ai-docs/sessions/{session}/design-validation.md
+
+## Approach
+1. Parse the issue list
+2. Fix highest severity issues first
+3. Make minimal, focused changes
+4. Verify fixes with browser if needed`;
+
+export function createUiDeveloperAgent(
+  model: string = DEFAULT_UI_DEVELOPER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Fixes UI issues identified by designer",
+    mode: "subagent",
+    model,
+    prompt: UI_DEVELOPER_PROMPT,
+    color: "#F472B6", // Light pink
+    permission: {
+      write: "allow",
+      edit: "allow",
+      multiedit: "allow",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+    },
+    skills: ["sveltekit", "shadcn-svelte"],
+  };
+}
+
+export const uiDeveloperAgent = createUiDeveloperAgent();
+```
+
+#### 2.2.7 Reviewer Agent
+
+```typescript
+// src/agents/reviewer.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_REVIEWER_MODEL = "anthropic/claude-sonnet-4";
+
+const REVIEWER_PROMPT = `You are the Magnus Opus Code Reviewer.
+
+## Responsibilities
+1. Review code for quality and patterns
+2. Check type safety
+3. Verify error handling
+4. Assess performance implications
+5. Check security concerns
+6. Verify best practices
+
+## Issue Severity
+- CRITICAL: Must fix before merge (security, data loss)
+- MAJOR: Should fix (bugs, poor patterns)
+- MINOR: Nice to fix (style, minor improvements)
+- NITPICK: Optional (preferences)
+
+## Output Format
+Verdict: APPROVED | NEEDS_REVISION | MAJOR_CONCERNS
+
+Issues:
+- [CRITICAL] Description
+- [MAJOR] Description
+- [MINOR] Description`;
+
+export function createReviewerAgent(
+  model: string = DEFAULT_REVIEWER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Reviews code for quality and patterns",
+    mode: "subagent",
+    model,
+    prompt: REVIEWER_PROMPT,
+    color: "#8B5CF6", // Violet
+    permission: {
+      write: "allow", // For writing review reports
+      edit: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+    },
+  };
+}
+
+export const reviewerAgent = createReviewerAgent();
+```
+
+#### 2.2.8 Plan Reviewer Agent
+
+```typescript
+// src/agents/plan-reviewer.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_PLAN_REVIEWER_MODEL = "anthropic/claude-sonnet-4";
+
+const PLAN_REVIEWER_PROMPT = `You are the Magnus Opus Plan Reviewer.
+
+## Responsibilities
+1. Review architecture plans
+2. Check for missing considerations
+3. Suggest alternative approaches
+4. Assess risk levels
+5. Verify completeness
+
+## Review Criteria
+- Does the plan address all requirements?
+- Are there missing edge cases?
+- Is the data model appropriate?
+- Are there scalability concerns?
+- Is the implementation order correct?
+
+## Output Format
+Verdict: APPROVED | NEEDS_REVISION | MAJOR_CONCERNS
+
+Feedback with specific recommendations.`;
+
+export function createPlanReviewerAgent(
+  model: string = DEFAULT_PLAN_REVIEWER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Reviews architecture plans",
+    mode: "subagent",
+    model,
+    prompt: PLAN_REVIEWER_PROMPT,
+    color: "#6366F1", // Indigo
+    permission: {
+      write: "allow",
+      edit: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+    },
+    thinking: {
+      type: "enabled",
+      budgetTokens: 16000,
+    },
+  };
+}
+
+export const planReviewerAgent = createPlanReviewerAgent();
+```
+
+#### 2.2.9 Tester Agent
+
+```typescript
+// src/agents/tester.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_TESTER_MODEL = "anthropic/claude-3-haiku-20240307";
+
+const TESTER_PROMPT = `You are the Magnus Opus Tester.
+
+## Responsibilities
+1. Run browser tests
+2. Validate UI interactions
+3. Check form submissions
+4. Test error states
+5. Verify responsive behavior
+
+## Tools
+- Use Playwright MCP for browser automation
+- Take screenshots for evidence
+- Report issues found
+
+## Output
+Write to: testing-report.md
+Include: Test results, screenshots, issues found`;
+
+export function createTesterAgent(
+  model: string = DEFAULT_TESTER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Browser and integration testing",
+    mode: "subagent",
+    model,
+    prompt: TESTER_PROMPT,
+    color: "#14B8A6", // Teal
+    permission: {
+      write: "allow",
+      edit: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+    },
+  };
+}
+
+export const testerAgent = createTesterAgent();
+```
+
+#### 2.2.10 Explorer Agent
+
+```typescript
+// src/agents/explorer.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_EXPLORER_MODEL = "xai/grok-4";
+
+const EXPLORER_PROMPT = `You are the Magnus Opus Explorer - optimized for fast codebase navigation.
+
+## Responsibilities
+1. Find files by pattern
+2. Search code for keywords
+3. Analyze dependencies
+4. Map codebase structure
+
+## Constraints
+- Read-only operations only
+- Return concise summaries
+- Be fast and efficient
+
+## Common Tasks
+- Find where X is defined
+- List files matching pattern
+- Search for usages of Y
+- Analyze imports`;
+
+export function createExplorerAgent(
+  model: string = DEFAULT_EXPLORER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Fast codebase exploration (read-only)",
+    mode: "subagent",
+    model,
+    prompt: EXPLORER_PROMPT,
+    color: "#06B6D4", // Cyan
+    permission: {
+      write: "deny",
+      edit: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+    },
+    temperature: 0.1, // Very low for consistent search
+  };
+}
+
+export const explorerAgent = createExplorerAgent();
+```
+
+#### 2.2.11 Cleaner Agent
+
+```typescript
+// src/agents/cleaner.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_CLEANER_MODEL = "anthropic/claude-3-haiku-20240307";
+
+const CLEANER_PROMPT = `You are the Magnus Opus Cleaner.
+
+## Responsibilities
+1. Remove temporary files
+2. Clean old sessions
+3. Remove build artifacts
+4. Archive completed sessions
+
+## Safety Rules
+- NEVER delete source code
+- ONLY delete files in ai-docs/sessions/
+- Ask before deleting anything ambiguous
+- Keep session metadata for audit`;
+
+export function createCleanerAgent(
+  model: string = DEFAULT_CLEANER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Cleans up session artifacts",
+    mode: "subagent",
+    model,
+    prompt: CLEANER_PROMPT,
+    color: "#78716C", // Stone
+    permission: {
+      write: "deny",
+      edit: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow", // For rm commands
+    },
+  };
+}
+
+export const cleanerAgent = createCleanerAgent();
+```
+
+### 2.3 Agent Aggregation
+
+```typescript
+// src/agents/index.ts
+import type { MagnusAgentConfig } from "./types";
+import type { MagnusOpusConfig } from "../config/schema";
+
+import { orchestratorAgent, createOrchestratorAgent } from "./orchestrator";
+import { architectAgent, createArchitectAgent } from "./architect";
+import { developerAgent, createDeveloperAgent } from "./developer";
+import { backendAgent, createBackendAgent } from "./backend";
+import { designerAgent, createDesignerAgent } from "./designer";
+import { uiDeveloperAgent, createUiDeveloperAgent } from "./ui-developer";
+import { reviewerAgent, createReviewerAgent } from "./reviewer";
+import { planReviewerAgent, createPlanReviewerAgent } from "./plan-reviewer";
+import { testerAgent, createTesterAgent } from "./tester";
+import { explorerAgent, createExplorerAgent } from "./explorer";
+import { cleanerAgent, createCleanerAgent } from "./cleaner";
+
+export const builtinAgents: Record<string, MagnusAgentConfig> = {
+  orchestrator: orchestratorAgent,
+  architect: architectAgent,
+  developer: developerAgent,
+  backend: backendAgent,
+  designer: designerAgent,
+  "ui-developer": uiDeveloperAgent,
+  reviewer: reviewerAgent,
+  "plan-reviewer": planReviewerAgent,
+  tester: testerAgent,
+  explorer: explorerAgent,
+  cleaner: cleanerAgent,
+};
+
+export function createBuiltinAgents(
+  disabledAgents?: string[],
+  agentOverrides?: MagnusOpusConfig["agents"]
+): Record<string, MagnusAgentConfig> {
+  const disabled = new Set(disabledAgents ?? []);
+  const agents: Record<string, MagnusAgentConfig> = {};
+
+  for (const [name, agent] of Object.entries(builtinAgents)) {
+    if (disabled.has(name)) continue;
+
+    const override = agentOverrides?.[name];
+    if (override) {
+      // Apply model override
+      const model = override.model ?? agent.model;
+      const creator = getAgentCreator(name);
+      agents[name] = creator ? creator(model) : { ...agent, model };
+      
+      // Apply other overrides
+      if (override.temperature !== undefined) {
+        agents[name].temperature = override.temperature;
+      }
+      if (override.skills !== undefined) {
+        agents[name].skills = override.skills;
+      }
+    } else {
+      agents[name] = agent;
+    }
+  }
+
+  return agents;
+}
+
+function getAgentCreator(name: string): ((model: string) => MagnusAgentConfig) | null {
+  const creators: Record<string, (model: string) => MagnusAgentConfig> = {
+    orchestrator: createOrchestratorAgent,
+    architect: createArchitectAgent,
+    developer: createDeveloperAgent,
+    backend: createBackendAgent,
+    designer: createDesignerAgent,
+    "ui-developer": createUiDeveloperAgent,
+    reviewer: createReviewerAgent,
+    "plan-reviewer": createPlanReviewerAgent,
+    tester: createTesterAgent,
+    explorer: createExplorerAgent,
+    cleaner: createCleanerAgent,
+  };
+  return creators[name] ?? null;
+}
+
+// Re-export individual agents
+export * from "./orchestrator";
+export * from "./architect";
+export * from "./developer";
+export * from "./backend";
+export * from "./designer";
+export * from "./ui-developer";
+export * from "./reviewer";
+export * from "./plan-reviewer";
+export * from "./tester";
+export * from "./explorer";
+export * from "./cleaner";
+```
+
+---
+
+## 3. Tool Definitions
+
+<!-- =============================================================================
+WHY: Tool/Command Segmentation (DECISIONS.md D007)
+================================================================================
+
+1. SEPARATE COMMANDS
+   - /implement for full workflow
+   - /implement-api for API-only
+   - /validate-ui for design validation
+   - /review for code review
+   - Separation allows skipping/repeating phases independently
+
+2. TOOL HELPER PATTERN
+   - Use `tool()` from @opencode-ai/plugin
+   - Define args with tool.schema (Zod-like)
+   - Execute function receives args and context
+   - Return string result
+
+3. CONTEXT OBJECT
+   - sessionID: Current session
+   - messageID: Current message
+   - agent: Current agent name
+   - metadata(): Set title and metadata
+
+============================================================================= -->
+
+### 3.1 Tool Helper Pattern
+
+```typescript
+import { tool } from "@opencode-ai/plugin";
+
+export const myTool = tool({
+  description: "Tool description for AI to understand when to use it",
+  args: {
+    requiredArg: tool.schema.string().describe("Description"),
+    optionalArg: tool.schema.number().optional().describe("Optional description"),
+  },
+  async execute(args, ctx) {
+    // ctx.sessionID, ctx.messageID, ctx.agent available
+    ctx.metadata?.({ title: "My Tool", metadata: { key: "value" } });
+    return "Result string";
+  },
+});
+```
+
+### 3.2 /implement Command
+
+```typescript
+// src/tools/implement.ts
+import { tool } from "@opencode-ai/plugin";
+import { generateSessionId, createSessionDirectory } from "../sessions";
+import { detectWorkflowType } from "../workflows/detector";
+
+export const implement = tool({
+  description: `Full-cycle feature implementation with architecture planning, implementation, review, and testing.
+
+Usage: /implement <feature description>
+
+This command will:
+1. Detect workflow type (UI_FOCUSED, API_FOCUSED, MIXED)
+2. Create a session for artifacts
+3. Plan architecture with the architect agent
+4. Request user approval
+5. Implement with appropriate agents
+6. Run validation (design for UI, TDD for API)
+7. Multi-model code review
+8. Testing
+9. User acceptance`,
+
+  args: {
+    description: tool.schema.string().describe("Feature to implement"),
+    figma_url: tool.schema.string().optional().describe("Figma URL for UI validation"),
+    skip_plan_review: tool.schema.boolean().optional().describe("Skip external plan review"),
+    workflow_type: tool.schema.enum(["UI_FOCUSED", "API_FOCUSED", "MIXED"]).optional()
+      .describe("Force workflow type instead of auto-detection"),
+  },
+
+  async execute(args, ctx) {
+    const sessionId = generateSessionId("impl", args.description);
+    const sessionDir = await createSessionDirectory(sessionId);
+
+    // Detect or use forced workflow type
+    const workflowType = args.workflow_type ?? detectWorkflowType(args.description);
+
+    ctx.metadata?.({
+      title: `/implement: ${args.description.slice(0, 30)}...`,
+      metadata: {
+        sessionId,
+        workflowType,
+        figmaUrl: args.figma_url,
+      },
+    });
+
+    return `Session created: ${sessionId}
+
+**Workflow Type:** ${workflowType.type} (${Math.round(workflowType.confidence * 100)}% confidence)
+**Rationale:** ${workflowType.rationale}
+
+**Session Directory:** ${sessionDir}
+
+**Next Steps:**
+1. Architect will analyze requirements and create implementation plan
+2. You'll review and approve the plan
+3. Implementation will proceed based on workflow type
+
+Starting architecture planning...
+
+<system-instruction>
+Use the Task tool to delegate to the architect agent with this prompt:
+
+"Create an implementation plan for: ${args.description}
+
+Session: ${sessionId}
+Workflow Type: ${workflowType.type}
+${args.figma_url ? `Figma URL: ${args.figma_url}` : ""}
+
+Write output to:
+- ${sessionDir}/implementation-plan.md
+- ${sessionDir}/quick-reference.md"
+</system-instruction>`;
+  },
+});
+```
+
+### 3.3 /implement-api Command
+
+```typescript
+// src/tools/implement-api.ts
+import { tool } from "@opencode-ai/plugin";
+import { generateSessionId, createSessionDirectory } from "../sessions";
+
+export const implementApi = tool({
+  description: `API-focused implementation for Convex backend work only.
+
+Usage: /implement-api <api description>
+
+Skips UI phases, focuses on:
+1. Schema design
+2. Query/mutation implementation
+3. Test-driven development
+4. Code review`,
+
+  args: {
+    description: tool.schema.string().describe("API feature to implement"),
+  },
+
+  async execute(args, ctx) {
+    const sessionId = generateSessionId("api", args.description);
+    const sessionDir = await createSessionDirectory(sessionId);
+
+    ctx.metadata?.({
+      title: `/implement-api: ${args.description.slice(0, 30)}...`,
+      metadata: { sessionId, workflowType: "API_FOCUSED" },
+    });
+
+    return `API Session created: ${sessionId}
+
+**Workflow Type:** API_FOCUSED (forced)
+
+**Session Directory:** ${sessionDir}
+
+**Phases:**
+1. Architecture planning (backend agent)
+2. Implementation with TDD loop
+3. Code review
+4. User acceptance
+
+Starting backend architecture planning...
+
+<system-instruction>
+Use the Task tool to delegate to the architect agent with this prompt:
+
+"Create a Convex API implementation plan for: ${args.description}
+
+Session: ${sessionId}
+Focus: Convex schema, queries, mutations, actions
+
+Write output to:
+- ${sessionDir}/implementation-plan.md
+- ${sessionDir}/quick-reference.md"
+</system-instruction>`;
+  },
+});
+```
+
+### 3.4 /validate-ui Command
+
+```typescript
+// src/tools/validate-ui.ts
+import { tool } from "@opencode-ai/plugin";
+
+export const validateUi = tool({
+  description: `Validate UI implementation against Figma designs.
+
+Usage: /validate-ui <component/page path> [--figma_url=<url>]
+
+Uses the designer agent to compare screenshots with Figma designs.`,
+
+  args: {
+    path: tool.schema.string().describe("Path to component or page to validate"),
+    figma_url: tool.schema.string().optional().describe("Figma URL for comparison"),
+  },
+
+  async execute(args, ctx) {
+    ctx.metadata?.({
+      title: `/validate-ui: ${args.path}`,
+      metadata: { path: args.path, figmaUrl: args.figma_url },
+    });
+
+    return `Starting UI validation for: ${args.path}
+
+${args.figma_url ? `**Figma URL:** ${args.figma_url}` : "**Note:** No Figma URL provided - will do general UI review"}
+
+<system-instruction>
+Use the Task tool to delegate to the designer agent with this prompt:
+
+"Validate the UI implementation at: ${args.path}
+${args.figma_url ? `Compare against Figma: ${args.figma_url}` : ""}
+
+1. Take a screenshot of the current implementation
+2. Compare against the design (or review for general quality)
+3. List any discrepancies with severity
+4. Write findings to design-validation.md"
+</system-instruction>`;
+  },
+});
+```
+
+### 3.5 /review Command
+
+```typescript
+// src/tools/review.ts
+import { tool } from "@opencode-ai/plugin";
+
+export const review = tool({
+  description: `Multi-model code review with consensus analysis.
+
+Usage: /review <file or directory path>
+
+Runs parallel reviews with multiple AI models and consolidates findings.`,
+
+  args: {
+    path: tool.schema.string().describe("File or directory to review"),
+    models: tool.schema.array(tool.schema.string()).optional()
+      .describe("Models to use (default: configured review models)"),
+  },
+
+  async execute(args, ctx) {
+    const defaultModels = ["anthropic/claude-sonnet-4", "xai/grok-4", "google/gemini-2.5-flash"];
+    const models = args.models ?? defaultModels;
+
+    ctx.metadata?.({
+      title: `/review: ${args.path}`,
+      metadata: { path: args.path, models },
+    });
+
+    return `Starting multi-model code review
+
+**Path:** ${args.path}
+**Models:** ${models.join(", ")}
+
+<system-instruction>
+Launch parallel Task calls to the reviewer agent, one for each model.
+Use the 4-Message Pattern:
+
+Message 1 (current): Preparation complete
+Message 2: Launch ${models.length} parallel Task calls with different models
+Message 3: Consolidate results with consensus analysis
+Message 4: Present findings to user
+
+For each model, use this prompt:
+"Review the code at: ${args.path}
+
+Provide a structured review with:
+- Verdict: APPROVED | NEEDS_REVISION | MAJOR_CONCERNS
+- Issues by severity (CRITICAL, MAJOR, MINOR, NITPICK)
+- Specific file:line references
+- Suggested fixes"
+</system-instruction>`;
+  },
+});
+```
+
+### 3.6 /cleanup Command
+
+```typescript
+// src/tools/cleanup.ts
+import { tool } from "@opencode-ai/plugin";
+import { listSessions, deleteSession } from "../sessions";
+
+export const cleanup = tool({
+  description: `Clean up session artifacts.
+
+Usage: /cleanup [session_id]
+
+Without session_id: Lists all sessions
+With session_id: Deletes that session`,
+
+  args: {
+    session_id: tool.schema.string().optional().describe("Session ID to delete"),
+  },
+
+  async execute(args, ctx) {
+    if (!args.session_id) {
+      const sessions = await listSessions();
+      if (sessions.length === 0) {
+        return "No sessions found.";
+      }
+
+      const list = sessions
+        .map((s) => `- ${s.id} (${s.status}) - ${s.description}`)
+        .join("\n");
+
+      return `Sessions (${sessions.length}):\n\n${list}\n\nUse /cleanup <session_id> to delete a session.`;
+    }
+
+    const deleted = await deleteSession(args.session_id);
+    if (deleted) {
+      return `Deleted session: ${args.session_id}`;
+    } else {
+      return `Session not found: ${args.session_id}`;
+    }
+  },
+});
+```
+
+### 3.7 /help Command
+
+```typescript
+// src/tools/help.ts
+import { tool } from "@opencode-ai/plugin";
+import { builtinAgents } from "../agents";
+
+export const help = tool({
+  description: "Display Magnus Opus plugin documentation",
+
+  args: {
+    topic: tool.schema.enum(["commands", "agents", "workflows", "config", "all"]).optional()
+      .describe("Specific topic to show"),
+  },
+
+  async execute(args) {
+    const topic = args.topic ?? "all";
+
+    const sections: string[] = [];
+
+    if (topic === "all" || topic === "commands") {
+      sections.push(`## Commands
+
+| Command | Purpose |
+|---------|---------|
+| /implement | Full-cycle feature implementation |
+| /implement-api | Convex backend only |
+| /validate-ui | Design validation |
+| /review | Multi-model code review |
+| /cleanup | Session artifact cleanup |
+| /help | This documentation |`);
+    }
+
+    if (topic === "all" || topic === "agents") {
+      const agentList = Object.entries(builtinAgents)
+        .map(([name, agent]) => `| ${name} | ${agent.description} | ${agent.model} |`)
+        .join("\n");
+
+      sections.push(`## Agents
+
+| Name | Role | Model |
+|------|------|-------|
+${agentList}`);
+    }
+
+    if (topic === "all" || topic === "workflows") {
+      sections.push(`## Workflow Types
+
+| Type | Description | Key Agents |
+|------|-------------|------------|
+| UI_FOCUSED | Components, pages, styling | developer, designer, ui-developer |
+| API_FOCUSED | Convex functions, schema | backend, TDD loop |
+| MIXED | Both UI and API | Parallel tracks |`);
+    }
+
+    if (topic === "all" || topic === "config") {
+      sections.push(`## Configuration
+
+Config file: ~/.config/opencode/magnus-opus.json
+
+\`\`\`json
+{
+  "agents": { "orchestrator": { "model": "anthropic/claude-opus-4" } },
+  "disabled_agents": [],
+  "disabled_mcps": [],
+  "reviewModels": {
+    "codeReview": ["xai/grok-4", "google/gemini-2.5-flash"],
+    "autoUse": false
+  }
+}
+\`\`\``);
+    }
+
+    return `# Magnus Opus Help
+
+${sections.join("\n\n")}`;
+  },
+});
+```
+
+### 3.8 Tool Aggregation
+
+```typescript
+// src/tools/index.ts
+import { implement } from "./implement";
+import { implementApi } from "./implement-api";
+import { validateUi } from "./validate-ui";
+import { review } from "./review";
+import { cleanup } from "./cleanup";
+import { help } from "./help";
+
+export const builtinTools = {
+  implement,
+  "implement-api": implementApi,
+  "validate-ui": validateUi,
+  review,
+  cleanup,
+  help,
+};
+
+export * from "./implement";
+export * from "./implement-api";
+export * from "./validate-ui";
+export * from "./review";
+export * from "./cleanup";
+export * from "./help";
+```
+
+---
+
+## 4. MCP Server Definitions
+
+<!-- =============================================================================
+WHY: MCP Server Selection (DECISIONS.md D008)
+================================================================================
+
+1. WORKFLOW-DRIVEN SELECTION
+   - websearch: Research during planning
+   - context7: Documentation lookup for stack-specific questions
+   - figma: UI validation against designs
+   - chrome-devtools: Browser testing automation
+   - grep_app: Code search across GitHub
+
+2. OPTIONAL BY DEFAULT
+   - MCPs require API keys or external services
+   - Users can disable via config
+   - Graceful degradation if unavailable
+
+3. CONFIG HOOK INJECTION
+   - MCPs injected via config.mcp mutation
+   - Supports both local (command) and remote (http) formats
+
+============================================================================= -->
+
+### 4.1 MCP Config Types
+
+```typescript
+// src/mcp/types.ts
+
+export interface LocalMcpConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  disabled?: boolean;
+}
+
+export interface RemoteMcpConfig {
+  type: "http" | "sse";
+  url: string;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+}
+
+export type McpConfig = LocalMcpConfig | RemoteMcpConfig;
+```
+
+### 4.2 Built-in MCP Definitions
+
+```typescript
+// src/mcp/index.ts
+import type { McpConfig } from "./types";
+
+export const builtinMcpDefinitions: Record<string, McpConfig> = {
+  // Web search via Exa AI
+  websearch: {
+    type: "http",
+    url: "https://mcp.exa.ai/mcp?tools=web_search_exa",
+    headers: process.env.EXA_API_KEY
+      ? { "x-api-key": process.env.EXA_API_KEY }
+      : undefined,
+  },
+
+  // Documentation lookup
+  context7: {
+    command: "npx",
+    args: ["-y", "@anthropic-ai/mcp-server-context7"],
+  },
+
+  // Figma integration
+  figma: {
+    command: "npx",
+    args: ["-y", "@anthropic-ai/mcp-server-figma"],
+    env: process.env.FIGMA_ACCESS_TOKEN
+      ? { FIGMA_ACCESS_TOKEN: process.env.FIGMA_ACCESS_TOKEN }
+      : undefined,
+  },
+
+  // Chrome DevTools for browser testing
+  "chrome-devtools": {
+    command: "npx",
+    args: ["-y", "@anthropic-ai/mcp-server-chrome-devtools"],
+  },
+
+  // GitHub code search
+  grep_app: {
+    type: "http",
+    url: "https://mcp.grep.app/mcp",
+  },
+};
+
+export function createBuiltinMcps(
+  disabledMcps?: string[]
+): Record<string, McpConfig> {
+  const disabled = new Set(disabledMcps ?? []);
+  const mcps: Record<string, McpConfig> = {};
+
+  for (const [name, config] of Object.entries(builtinMcpDefinitions)) {
+    if (disabled.has(name)) continue;
+    
+    // Skip if required env vars are missing
+    if (name === "websearch" && !process.env.EXA_API_KEY) continue;
+    if (name === "figma" && !process.env.FIGMA_ACCESS_TOKEN) continue;
+    
+    mcps[name] = config;
+  }
+
+  return mcps;
+}
+```
+
+### 4.3 MCP Config Loader
+
+```typescript
+// src/mcp/loader.ts
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+import type { McpConfig } from "./types";
+
+const MCP_CONFIG_PATHS = [
+  "~/.config/opencode/.mcp.json",
+  ".mcp.json",
+  ".opencode/.mcp.json",
+];
+
+interface McpJsonFile {
+  mcpServers?: Record<string, McpConfig>;
+}
+
+function expandEnvVars(value: string): string {
+  return value.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "");
+}
+
+function expandConfig(config: McpConfig): McpConfig {
+  if ("command" in config) {
+    return {
+      ...config,
+      args: config.args?.map(expandEnvVars),
+      env: config.env
+        ? Object.fromEntries(
+            Object.entries(config.env).map(([k, v]) => [k, expandEnvVars(v)])
+          )
+        : undefined,
+    };
+  }
+  return {
+    ...config,
+    url: expandEnvVars(config.url),
+    headers: config.headers
+      ? Object.fromEntries(
+          Object.entries(config.headers).map(([k, v]) => [k, expandEnvVars(v)])
+        )
+      : undefined,
+  };
+}
+
+export function loadMcpConfigs(projectDir: string): Record<string, McpConfig> {
+  const merged: Record<string, McpConfig> = {};
+
+  for (const configPath of MCP_CONFIG_PATHS) {
+    const fullPath = configPath.startsWith("~")
+      ? join(process.env.HOME ?? "", configPath.slice(1))
+      : join(projectDir, configPath);
+
+    if (!existsSync(fullPath)) continue;
+
+    try {
+      const content = readFileSync(fullPath, "utf-8");
+      const parsed: McpJsonFile = JSON.parse(content);
+
+      if (parsed.mcpServers) {
+        for (const [name, config] of Object.entries(parsed.mcpServers)) {
+          if (config.disabled) continue;
+          merged[name] = expandConfig(config);
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }
+
+  return merged;
+}
+```
+
+---
+
+## 5. Configuration Schema
+
+<!-- =============================================================================
+WHY: Zod for Config Validation (DECISIONS.md D009)
+================================================================================
+
+1. ZOD BENEFITS
+   - Schema and types co-located
+   - Clear error messages on validation failure
+   - Default values built-in
+   - Easy to extend
+
+2. MERGE STRATEGY
+   - User config (~/.config/opencode/magnus-opus.json)
+   - Project config (.opencode/magnus-opus.json)
+   - Project overrides user
+
+============================================================================= -->
+
+### 5.1 Schema Definition
+
+```typescript
+// src/config/schema.ts
+import { z } from "zod";
+
+// Permission value for agent tool access
+const PermissionValueSchema = z.enum(["allow", "ask", "deny"]);
+
+// Agent permission schema
+const AgentPermissionSchema = z.record(z.string(), PermissionValueSchema);
+
+// Agent override schema
+export const AgentOverrideSchema = z.object({
+  model: z.string().optional(),
+  variant: z.string().optional(),
+  category: z.string().optional(),
+  skills: z.array(z.string()).optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  top_p: z.number().min(0).max(1).optional(),
+  maxTokens: z.number().optional(),
+  prompt: z.string().optional(),
+  prompt_append: z.string().optional(),
+  description: z.string().optional(),
+  mode: z.enum(["subagent", "primary", "all"]).optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+  permission: AgentPermissionSchema.optional(),
+  disable: z.boolean().optional(),
+});
+
+// Category configuration for model groups
+export const CategoryConfigSchema = z.object({
+  model: z.string(),
+  variant: z.string().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  top_p: z.number().min(0).max(1).optional(),
+  maxTokens: z.number().optional(),
+  thinking: z.object({
+    type: z.enum(["enabled", "disabled"]),
+    budgetTokens: z.number().optional(),
+  }).optional(),
+  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
+  prompt_append: z.string().optional(),
+});
+
+// Review models configuration
+export const ReviewModelsSchema = z.object({
+  planReview: z.array(z.string()).optional(),
+  codeReview: z.array(z.string()).optional(),
+  autoUse: z.boolean().optional(),
+});
+
+// Session settings
+export const SessionSettingsSchema = z.object({
+  includeDescriptor: z.boolean().optional(),
+  autoCleanup: z.boolean().optional(),
+  retentionDays: z.number().optional(),
+});
+
+// Main config schema
+export const MagnusOpusConfigSchema = z.object({
+  // Agent overrides by name
+  agents: z.record(z.string(), AgentOverrideSchema).optional(),
+  
+  // Disabled features
+  disabled_agents: z.array(z.string()).optional(),
+  disabled_mcps: z.array(z.string()).optional(),
+  disabled_skills: z.array(z.string()).optional(),
+  disabled_hooks: z.array(z.string()).optional(),
+  
+  // Model categories
+  categories: z.record(z.string(), CategoryConfigSchema).optional(),
+  
+  // Review configuration
+  reviewModels: ReviewModelsSchema.optional(),
+  
+  // Session configuration
+  sessionSettings: SessionSettingsSchema.optional(),
+});
+
+export type MagnusOpusConfig = z.infer<typeof MagnusOpusConfigSchema>;
+export type AgentOverride = z.infer<typeof AgentOverrideSchema>;
+export type CategoryConfig = z.infer<typeof CategoryConfigSchema>;
+
+// Default configuration
+export const DEFAULT_CONFIG: MagnusOpusConfig = {
+  agents: {},
+  disabled_agents: [],
+  disabled_mcps: [],
+  disabled_skills: [],
+  disabled_hooks: [],
+  reviewModels: {
+    planReview: ["xai/grok-4", "openai/gpt-4o"],
+    codeReview: ["xai/grok-4", "google/gemini-2.5-flash"],
+    autoUse: false,
+  },
+  sessionSettings: {
+    includeDescriptor: true,
+    autoCleanup: false,
+    retentionDays: 30,
+  },
+};
+```
+
+### 5.2 Config Loader
+
+```typescript
+// src/plugin-config.ts
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+import { MagnusOpusConfigSchema, DEFAULT_CONFIG, type MagnusOpusConfig } from "./config/schema";
+
+const USER_CONFIG_PATH = "~/.config/opencode/magnus-opus.json";
+const PROJECT_CONFIG_PATH = ".opencode/magnus-opus.json";
+
+function loadJsonFile(path: string): unknown {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function resolvePath(path: string): string {
+  if (path.startsWith("~")) {
+    return join(process.env.HOME ?? "", path.slice(1));
+  }
+  return path;
+}
+
+export async function loadPluginConfig(projectDir: string): Promise<MagnusOpusConfig> {
+  // Load user config
+  const userPath = resolvePath(USER_CONFIG_PATH);
+  const userConfig = loadJsonFile(userPath);
+
+  // Load project config
+  const projectPath = join(projectDir, PROJECT_CONFIG_PATH);
+  const projectConfig = loadJsonFile(projectPath);
+
+  // Merge: defaults < user < project
+  const merged = {
+    ...DEFAULT_CONFIG,
+    ...(userConfig ?? {}),
+    ...(projectConfig ?? {}),
+  };
+
+  // Validate
+  const result = MagnusOpusConfigSchema.safeParse(merged);
+  if (!result.success) {
+    console.warn("[magnus-opus] Config validation errors:", result.error.format());
+    return DEFAULT_CONFIG;
+  }
+
+  return result.data;
+}
+```
+
+### 5.3 Model Context Limits (Cache)
+
+```typescript
+// src/config/model-limits.ts
+
+// Known context window limits by provider/model
+export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  "anthropic/claude-opus-4": 200_000,
+  "anthropic/claude-sonnet-4": 200_000,
+  "anthropic/claude-3-haiku-20240307": 200_000,
+  "google/gemini-2.5-pro": 1_000_000,
+  "google/gemini-2.5-flash": 1_000_000,
+  "xai/grok-4": 128_000,
+  "openai/gpt-4o": 128_000,
+};
+
+export function getModelContextLimit(model: string): number {
+  return MODEL_CONTEXT_LIMITS[model] ?? 128_000; // Default to 128k
+}
+```
+
+---
+
+## 6. Workflow System
+
+<!-- =============================================================================
+WHY: Phase System and Quality Gates (DECISIONS.md D011)
+================================================================================
+
+1. MULTI-PHASE WORKFLOW
+   - Clear progression from requirements to delivery
+   - Each phase has defined inputs/outputs
+   - Enables recovery from interruption
+
+2. QUALITY GATES
+   - user_approval: Explicit user confirmation
+   - pass_or_fix: Loop until passing
+   - all_tests_pass: All tests must pass
+   - all_reviewers_approve: Multi-model consensus
+
+3. WORKFLOW TYPE ROUTING
+   - UI_FOCUSED: developer agent path
+   - API_FOCUSED: backend agent path
+   - MIXED: parallel tracks
+
+============================================================================= -->
+
+### 6.1 Workflow Type Detection
+
+```typescript
+// src/workflows/detector.ts
+
+export type WorkflowType = "UI_FOCUSED" | "API_FOCUSED" | "MIXED" | "UNCLEAR";
+
+export interface WorkflowDetection {
+  type: WorkflowType;
+  confidence: number;
+  rationale: string;
+}
+
+const UI_KEYWORDS = [
+  "component", "page", "layout", "design", "figma", "ui", "styling",
+  "tailwind", "svelte", "button", "form", "modal", "dialog", "navbar",
+  "sidebar", "responsive", "css", "animation", "hover", "click",
+];
+
+const API_KEYWORDS = [
+  "query", "mutation", "action", "schema", "convex", "database", "api",
+  "crud", "endpoint", "backend", "server", "function", "validator",
+  "index", "table", "storage", "cron", "scheduled",
+];
+
+export function detectWorkflowType(description: string): WorkflowDetection {
+  const lower = description.toLowerCase();
+
+  const uiScore = UI_KEYWORDS.filter((kw) => lower.includes(kw)).length;
+  const apiScore = API_KEYWORDS.filter((kw) => lower.includes(kw)).length;
+
+  const total = uiScore + apiScore;
+  if (total === 0) {
+    return {
+      type: "UNCLEAR",
+      confidence: 0,
+      rationale: "No clear UI or API keywords detected",
+    };
+  }
+
+  const uiRatio = uiScore / total;
+  const apiRatio = apiScore / total;
+
+  if (uiScore > 0 && apiScore > 0 && Math.abs(uiRatio - apiRatio) < 0.3) {
+    return {
+      type: "MIXED",
+      confidence: 0.7,
+      rationale: `Both UI (${uiScore}) and API (${apiScore}) keywords detected`,
+    };
+  }
+
+  if (uiRatio > apiRatio) {
+    return {
+      type: "UI_FOCUSED",
+      confidence: Math.min(0.9, 0.5 + uiRatio * 0.5),
+      rationale: `UI keywords (${uiScore}) dominant over API (${apiScore})`,
+    };
+  }
+
+  return {
+    type: "API_FOCUSED",
+    confidence: Math.min(0.9, 0.5 + apiRatio * 0.5),
+    rationale: `API keywords (${apiScore}) dominant over UI (${uiScore})`,
+  };
+}
+
+export function getWorkflowImplications(type: WorkflowType): {
+  primaryAgent: string;
+  secondaryAgents: string[];
+  skipPhases: string[];
+} {
+  switch (type) {
+    case "UI_FOCUSED":
+      return {
+        primaryAgent: "developer",
+        secondaryAgents: ["designer", "ui-developer", "tester"],
+        skipPhases: [],
+      };
+    case "API_FOCUSED":
+      return {
+        primaryAgent: "backend",
+        secondaryAgents: ["tester"],
+        skipPhases: ["design-validation", "ui-fixes", "browser-testing"],
+      };
+    case "MIXED":
+      return {
+        primaryAgent: "developer",
+        secondaryAgents: ["backend", "designer", "ui-developer", "tester"],
+        skipPhases: [],
+      };
+    default:
+      return {
+        primaryAgent: "developer",
+        secondaryAgents: ["backend"],
+        skipPhases: [],
+      };
+  }
+}
+```
+
+### 6.2 Phase Definitions
+
+```typescript
+// src/workflows/phases.ts
+
+export type GateType = 
+  | "user_approval"
+  | "pass_or_fix"
+  | "all_tests_pass"
+  | "all_reviewers_approve"
+  | null;
+
+export interface PhaseDefinition {
+  name: string;
+  description: string;
+  agent: string;
+  outputs: string[];
+  qualityGate: GateType;
+  skipCondition?: (workflowType: string) => boolean;
+}
+
+export const IMPLEMENT_PHASES: Record<string, PhaseDefinition> = {
+  requirements: {
+    name: "Requirements Gathering",
+    description: "Analyze request and ask clarifying questions",
+    agent: "orchestrator",
+    outputs: [],
+    qualityGate: null,
+  },
+
+  architecture: {
+    name: "Architecture Planning",
+    description: "Create comprehensive implementation plan",
+    agent: "architect",
+    outputs: ["implementation-plan.md", "quick-reference.md"],
+    qualityGate: "user_approval",
+  },
+
+  "plan-review": {
+    name: "Plan Review",
+    description: "Multi-model review of architecture plan",
+    agent: "plan-reviewer",
+    outputs: ["reviews/plan-review/"],
+    qualityGate: "all_reviewers_approve",
+    skipCondition: () => false, // Can be skipped via flag
+  },
+
+  implementation: {
+    name: "Implementation",
+    description: "Build the feature according to plan",
+    agent: "developer", // or "backend" based on workflow
+    outputs: ["src/"],
+    qualityGate: null,
+  },
+
+  "design-validation": {
+    name: "Design Validation",
+    description: "Compare implementation against Figma",
+    agent: "designer",
+    outputs: ["design-validation.md"],
+    qualityGate: "pass_or_fix",
+    skipCondition: (wt) => wt === "API_FOCUSED",
+  },
+
+  "ui-fixes": {
+    name: "UI Fixes",
+    description: "Fix issues identified by designer",
+    agent: "ui-developer",
+    outputs: [],
+    qualityGate: null,
+    skipCondition: (wt) => wt === "API_FOCUSED",
+  },
+
+  "code-review": {
+    name: "Code Review",
+    description: "Multi-model code review with consensus",
+    agent: "reviewer",
+    outputs: ["reviews/code-review/"],
+    qualityGate: "all_reviewers_approve",
+  },
+
+  "review-fixes": {
+    name: "Review Fixes",
+    description: "Address issues from code review",
+    agent: "developer",
+    outputs: [],
+    qualityGate: "pass_or_fix",
+  },
+
+  testing: {
+    name: "Testing",
+    description: "Browser and integration testing",
+    agent: "tester",
+    outputs: ["testing-report.md"],
+    qualityGate: "all_tests_pass",
+    skipCondition: (wt) => wt === "API_FOCUSED", // API uses TDD loop
+  },
+
+  acceptance: {
+    name: "User Acceptance",
+    description: "Present final implementation for approval",
+    agent: "orchestrator",
+    outputs: ["final-summary.md"],
+    qualityGate: "user_approval",
+  },
+
+  cleanup: {
+    name: "Cleanup",
+    description: "Remove temporary artifacts",
+    agent: "cleaner",
+    outputs: [],
+    qualityGate: null,
+  },
+};
+
+export function getPhasesForWorkflow(workflowType: string): PhaseDefinition[] {
+  return Object.values(IMPLEMENT_PHASES).filter(
+    (phase) => !phase.skipCondition?.(workflowType)
+  );
+}
+```
+
+### 6.3 Quality Gate Implementations
+
+```typescript
+// src/workflows/gates.ts
+import type { MagnusOpusConfig } from "../config/schema";
+
+export interface GateResult {
+  passed: boolean;
+  reason?: string;
+  data?: unknown;
+}
+
+export async function checkUserApproval(
+  sessionId: string,
+  question: string
+): Promise<GateResult> {
+  // This is handled by the agent via AskUserQuestion tool
+  // Returns true if user approved, false otherwise
+  return { passed: true, reason: "User approval pending via AskUserQuestion" };
+}
+
+export async function checkAllReviewersApprove(
+  reviews: Array<{ model: string; verdict: string; issues: unknown[] }>
+): Promise<GateResult> {
+  const verdicts = reviews.map((r) => r.verdict);
+  const criticalIssues = reviews.flatMap((r) =>
+    (r.issues as Array<{ severity: string }>).filter((i) => i.severity === "CRITICAL")
+  );
+
+  if (criticalIssues.length > 0) {
+    return {
+      passed: false,
+      reason: `${criticalIssues.length} critical issues found`,
+      data: criticalIssues,
+    };
+  }
+
+  const majorConcerns = verdicts.filter((v) => v === "MAJOR_CONCERNS").length;
+  if (majorConcerns >= reviews.length / 2) {
+    return {
+      passed: false,
+      reason: `${majorConcerns}/${reviews.length} reviewers have major concerns`,
+    };
+  }
+
+  return { passed: true };
+}
+
+export async function checkAllTestsPass(
+  testResults: Array<{ name: string; passed: boolean; error?: string }>
+): Promise<GateResult> {
+  const failed = testResults.filter((t) => !t.passed);
+  
+  if (failed.length > 0) {
+    return {
+      passed: false,
+      reason: `${failed.length} tests failed`,
+      data: failed,
+    };
+  }
+
+  return { passed: true };
+}
+```
+
+### 6.4 Agent Routing
+
+```typescript
+// src/workflows/routing.ts
+import type { WorkflowType } from "./detector";
+
+export interface AgentRouting {
+  implementation: string[];
+  validation: string[];
+  review: string[];
+}
+
+export function getAgentsForWorkflow(workflowType: WorkflowType): AgentRouting {
+  switch (workflowType) {
+    case "UI_FOCUSED":
+      return {
+        implementation: ["developer"],
+        validation: ["designer", "tester"],
+        review: ["reviewer"],
+      };
+
+    case "API_FOCUSED":
+      return {
+        implementation: ["backend"],
+        validation: [], // TDD loop instead
+        review: ["reviewer"],
+      };
+
+    case "MIXED":
+      return {
+        implementation: ["developer", "backend"],
+        validation: ["designer", "tester"],
+        review: ["reviewer"],
+      };
+
+    default:
+      return {
+        implementation: ["developer"],
+        validation: [],
+        review: ["reviewer"],
+      };
+  }
+}
+```
+
+---
+
+## 7. Session Management
+
+<!-- =============================================================================
+WHY: File-Based Session Storage (DECISIONS.md D012)
+================================================================================
+
+1. NO EXTERNAL DATABASE
+   - Sessions stored in project directory
+   - Easy to inspect and debug
+   - Git-friendly (can be ignored or committed)
+   - Survives plugin restarts
+
+2. SESSION ID FORMAT
+   - Prefix: command type (impl, api, etc.)
+   - Timestamp: YYYYMMDD-HHMMSS
+   - Random: 6 chars for uniqueness
+   - Optional: descriptor from user
+
+3. ARTIFACT ISOLATION
+   - Each session gets its own directory
+   - Plans, reviews, reports all colocated
+   - Easy cleanup by deleting directory
+
+============================================================================= -->
+
+### 7.1 Session ID Generation
+
+```typescript
+// src/sessions/manager.ts
+import { randomBytes } from "crypto";
+
+export interface SessionIdOptions {
+  command: string;
+  descriptor?: string;
+}
+
+function sanitizeForFilesystem(str: string): string {
+  return str
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 30);
+}
+
+function formatTimestamp(): string {
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+function randomSuffix(): string {
+  return randomBytes(3).toString("hex");
+}
+
+export function generateSessionId(
+  command: string,
+  descriptor?: string
+): string {
+  const parts = [command, formatTimestamp(), randomSuffix()];
+
+  if (descriptor) {
+    parts.push(sanitizeForFilesystem(descriptor));
+  }
+
+  return parts.join("-");
+}
+
+// Example output: impl-20260118-143052-a1b2c3-user-profile
+```
+
+### 7.2 Session Directory Management
+
+```typescript
+// src/sessions/directory.ts
+import { existsSync, mkdirSync, rmSync, readdirSync } from "fs";
+import { join } from "path";
+
+const SESSION_BASE_DIR = "ai-docs/sessions";
+
+export function getSessionDir(sessionId: string, projectDir?: string): string {
+  const base = projectDir ?? process.cwd();
+  return join(base, SESSION_BASE_DIR, sessionId);
+}
+
+export async function createSessionDirectory(
+  sessionId: string,
+  projectDir?: string
+): Promise<string> {
+  const sessionDir = getSessionDir(sessionId, projectDir);
+
+  // Create main session directory
+  mkdirSync(sessionDir, { recursive: true });
+
+  // Create subdirectories
+  mkdirSync(join(sessionDir, "reviews", "plan-review"), { recursive: true });
+  mkdirSync(join(sessionDir, "reviews", "code-review"), { recursive: true });
+
+  return sessionDir;
+}
+
+export function sessionExists(sessionId: string, projectDir?: string): boolean {
+  return existsSync(getSessionDir(sessionId, projectDir));
+}
+
+export async function deleteSession(
+  sessionId: string,
+  projectDir?: string
+): Promise<boolean> {
+  const sessionDir = getSessionDir(sessionId, projectDir);
+
+  if (!existsSync(sessionDir)) {
+    return false;
+  }
+
+  rmSync(sessionDir, { recursive: true, force: true });
+  return true;
+}
+
+export interface SessionSummary {
+  id: string;
+  status: string;
+  description: string;
+  createdAt: Date;
+}
+
+export async function listSessions(projectDir?: string): Promise<SessionSummary[]> {
+  const base = projectDir ?? process.cwd();
+  const sessionsDir = join(base, SESSION_BASE_DIR);
+
+  if (!existsSync(sessionsDir)) {
+    return [];
+  }
+
+  const entries = readdirSync(sessionsDir, { withFileTypes: true });
+  const sessions: SessionSummary[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+
+    const metadataPath = join(sessionsDir, entry.name, "session-meta.json");
+    let metadata: Partial<SessionSummary> = {};
+
+    if (existsSync(metadataPath)) {
+      try {
+        const { readFileSync } = await import("fs");
+        metadata = JSON.parse(readFileSync(metadataPath, "utf-8"));
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    sessions.push({
+      id: entry.name,
+      status: metadata.status ?? "unknown",
+      description: metadata.description ?? entry.name,
+      createdAt: metadata.createdAt ? new Date(metadata.createdAt) : new Date(),
+    });
+  }
+
+  // Sort by creation date, newest first
+  return sessions.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
+```
+
+### 7.3 Session Metadata
+
+```typescript
+// src/sessions/metadata.ts
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+import { getSessionDir } from "./directory";
+
+export interface SessionMetadata {
+  id: string;
+  command: string;
+  description: string;
+  workflowType: string;
+  status: "active" | "completed" | "failed" | "cancelled";
+  createdAt: string;
+  updatedAt: string;
+  currentPhase?: string;
+  completedPhases: string[];
+  artifacts: string[];
+  figmaUrl?: string;
+}
+
+const METADATA_FILE = "session-meta.json";
+
+export function createSessionMetadata(options: {
+  id: string;
+  command: string;
+  description: string;
+  workflowType: string;
+  figmaUrl?: string;
+}): SessionMetadata {
+  const now = new Date().toISOString();
+
+  return {
+    id: options.id,
+    command: options.command,
+    description: options.description,
+    workflowType: options.workflowType,
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    completedPhases: [],
+    artifacts: [],
+    figmaUrl: options.figmaUrl,
+  };
+}
+
+export async function saveSessionMetadata(
+  sessionId: string,
+  metadata: SessionMetadata,
+  projectDir?: string
+): Promise<void> {
+  const sessionDir = getSessionDir(sessionId, projectDir);
+  const metadataPath = join(sessionDir, METADATA_FILE);
+
+  metadata.updatedAt = new Date().toISOString();
+
+  writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+}
+
+export async function loadSessionMetadata(
+  sessionId: string,
+  projectDir?: string
+): Promise<SessionMetadata | null> {
+  const sessionDir = getSessionDir(sessionId, projectDir);
+  const metadataPath = join(sessionDir, METADATA_FILE);
+
+  if (!existsSync(metadataPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(readFileSync(metadataPath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+export async function updateSessionPhase(
+  sessionId: string,
+  phase: string,
+  projectDir?: string
+): Promise<void> {
+  const metadata = await loadSessionMetadata(sessionId, projectDir);
+  if (!metadata) return;
+
+  if (metadata.currentPhase && !metadata.completedPhases.includes(metadata.currentPhase)) {
+    metadata.completedPhases.push(metadata.currentPhase);
+  }
+
+  metadata.currentPhase = phase;
+  await saveSessionMetadata(sessionId, metadata, projectDir);
+}
+
+export async function addSessionArtifact(
+  sessionId: string,
+  artifact: string,
+  projectDir?: string
+): Promise<void> {
+  const metadata = await loadSessionMetadata(sessionId, projectDir);
+  if (!metadata) return;
+
+  if (!metadata.artifacts.includes(artifact)) {
+    metadata.artifacts.push(artifact);
+    await saveSessionMetadata(sessionId, metadata, projectDir);
+  }
+}
+```
+
+### 7.4 Session Index
+
+```typescript
+// src/sessions/index.ts
+export * from "./manager";
+export * from "./directory";
+export * from "./metadata";
+```
+
+---
+
+## 8. Skills System
+
+<!-- =============================================================================
+WHY: Skills vs Direct Prompts (DECISIONS.md D013)
+================================================================================
+
+1. REUSABLE KNOWLEDGE
+   - Skills are markdown files with specialized knowledge
+   - Can be updated independently of code
+   - Shared across agents via injection
+
+2. LOADING SOURCES
+   - Built-in: content/skills/*.md (bundled with plugin)
+   - User: ~/.config/opencode/skills/ (global)
+   - Project: .opencode/skills/ (project-specific)
+
+3. INJECTION MECHANISM
+   - Agent-level: Built into agent system prompt
+   - Dynamic: Via experimental.chat.system.transform hook
+   - Wrapped in <skill> tags for clear delineation
+
+============================================================================= -->
+
+### 8.1 Skill Types
+
+```typescript
+// src/skills/types.ts
+
+export interface BuiltinSkill {
+  name: string;
+  description: string;
+  template: string;
+  license?: string;
+  compatibility?: string;
+  metadata?: Record<string, unknown>;
+  allowedTools?: string[];
+  agent?: string;
+  model?: string;
+}
+
+export interface LoadedSkill {
+  name: string;
+  path?: string;
+  definition: BuiltinSkill;
+  scope: "builtin" | "user" | "project";
+}
+
+export interface SkillMcpConfig {
+  [serverName: string]: {
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+  };
+}
+```
+
+### 8.2 Built-in Skill Definitions
+
+```typescript
+// src/skills/builtin/index.ts
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import type { BuiltinSkill } from "../types";
+
+// Resolve content directory relative to this file
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SKILLS_DIR = join(__dirname, "../../../content/skills");
+
+function loadSkillContent(filename: string): string {
+  try {
+    return readFileSync(join(SKILLS_DIR, filename), "utf-8");
+  } catch {
+    return `<!-- Skill file not found: ${filename} -->`;
+  }
+}
+
+export const sveltekitSkill: BuiltinSkill = {
+  name: "sveltekit",
+  description: "SvelteKit 2 + Svelte 5 patterns and best practices",
+  template: loadSkillContent("SVELTEKIT.md"),
+  allowedTools: ["write", "edit", "read", "glob", "grep", "bash"],
+};
+
+export const convexSkill: BuiltinSkill = {
+  name: "convex",
+  description: "Convex backend patterns (schema, queries, mutations, actions)",
+  template: loadSkillContent("CONVEX.md"),
+  allowedTools: ["write", "edit", "read", "glob", "grep", "bash"],
+};
+
+export const shadcnSvelteSkill: BuiltinSkill = {
+  name: "shadcn-svelte",
+  description: "shadcn-svelte component library patterns",
+  template: loadSkillContent("SHADCN-SVELTE.md"),
+  allowedTools: ["write", "edit", "read", "glob", "grep", "bash"],
+};
+
+export const qualityGatesSkill: BuiltinSkill = {
+  name: "quality-gates",
+  description: "Quality gate patterns for multi-phase workflows",
+  template: loadSkillContent("QUALITY-GATES.md"),
+};
+
+export const todowriteSkill: BuiltinSkill = {
+  name: "todowrite-orchestration",
+  description: "TodoWrite patterns for task orchestration",
+  template: loadSkillContent("TODOWRITE-ORCHESTRATION.md"),
+};
+
+export const multiAgentSkill: BuiltinSkill = {
+  name: "multi-agent-coordination",
+  description: "4-Message Pattern and parallel agent execution",
+  template: loadSkillContent("MULTI-AGENT-COORDINATION.md"),
+};
+
+export const errorRecoverySkill: BuiltinSkill = {
+  name: "error-recovery",
+  description: "Error recovery and resilience patterns",
+  template: loadSkillContent("ERROR-RECOVERY.md"),
+};
+
+export const builtinSkills: Record<string, BuiltinSkill> = {
+  sveltekit: sveltekitSkill,
+  convex: convexSkill,
+  "shadcn-svelte": shadcnSvelteSkill,
+  "quality-gates": qualityGatesSkill,
+  "todowrite-orchestration": todowriteSkill,
+  "multi-agent-coordination": multiAgentSkill,
+  "error-recovery": errorRecoverySkill,
+};
+```
+
+### 8.3 Skill Loader
+
+```typescript
+// src/skills/loader.ts
+import { existsSync, readdirSync, readFileSync } from "fs";
+import { join } from "path";
+import type { LoadedSkill, BuiltinSkill } from "./types";
+import { builtinSkills } from "./builtin";
+
+const USER_SKILLS_DIR = "~/.config/opencode/skills";
+const PROJECT_SKILLS_DIR = ".opencode/skills";
+
+function resolvePath(path: string): string {
+  if (path.startsWith("~")) {
+    return join(process.env.HOME ?? "", path.slice(1));
+  }
+  return path;
+}
+
+interface ParsedSkillFile {
+  frontmatter: Record<string, unknown>;
+  content: string;
+}
+
+function parseSkillFile(content: string): ParsedSkillFile {
+  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+
+  if (!frontmatterMatch) {
+    return { frontmatter: {}, content };
+  }
+
+  const frontmatterStr = frontmatterMatch[1];
+  const body = frontmatterMatch[2];
+
+  // Simple YAML-like parsing (name: value)
+  const frontmatter: Record<string, unknown> = {};
+  for (const line of frontmatterStr.split("\n")) {
+    const match = line.match(/^(\w+):\s*(.*)$/);
+    if (match) {
+      frontmatter[match[1]] = match[2].trim();
+    }
+  }
+
+  return { frontmatter, content: body };
+}
+
+function loadSkillsFromDirectory(
+  dir: string,
+  scope: "user" | "project"
+): LoadedSkill[] {
+  const resolved = resolvePath(dir);
+  if (!existsSync(resolved)) return [];
+
+  const skills: LoadedSkill[] = [];
+  const entries = readdirSync(resolved, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".md")) continue;
+
+    const path = join(resolved, entry.name);
+    const content = readFileSync(path, "utf-8");
+    const { frontmatter, content: template } = parseSkillFile(content);
+
+    const name = (frontmatter.name as string) ?? entry.name.replace(".md", "").toLowerCase();
+
+    skills.push({
+      name,
+      path,
+      definition: {
+        name,
+        description: (frontmatter.description as string) ?? `Skill from ${entry.name}`,
+        template,
+        allowedTools: (frontmatter["allowed-tools"] as string)?.split(/\s+/),
+        agent: frontmatter.agent as string,
+        model: frontmatter.model as string,
+      },
+      scope,
+    });
+  }
+
+  return skills;
+}
+
+export async function discoverSkills(projectDir?: string): Promise<LoadedSkill[]> {
+  const skills: LoadedSkill[] = [];
+
+  // 1. Built-in skills (lowest priority)
+  for (const [name, definition] of Object.entries(builtinSkills)) {
+    skills.push({
+      name,
+      definition,
+      scope: "builtin",
+    });
+  }
+
+  // 2. User skills
+  skills.push(...loadSkillsFromDirectory(USER_SKILLS_DIR, "user"));
+
+  // 3. Project skills (highest priority, can override)
+  if (projectDir) {
+    skills.push(
+      ...loadSkillsFromDirectory(join(projectDir, PROJECT_SKILLS_DIR), "project")
+    );
+  }
+
+  return skills;
+}
+
+export function getSkill(
+  skills: LoadedSkill[],
+  name: string
+): LoadedSkill | undefined {
+  // Return last match (project > user > builtin)
+  return [...skills].reverse().find((s) => s.name === name);
+}
+```
+
+### 8.4 Skill Injection
+
+```typescript
+// src/skills/injector.ts
+import type { LoadedSkill } from "./types";
+
+// Agent to default skills mapping
+const AGENT_SKILLS: Record<string, string[]> = {
+  orchestrator: ["multi-agent-coordination", "todowrite-orchestration", "quality-gates"],
+  architect: ["quality-gates"],
+  developer: ["sveltekit", "shadcn-svelte"],
+  backend: ["convex"],
+  "ui-developer": ["sveltekit", "shadcn-svelte"],
+  reviewer: [],
+  "plan-reviewer": [],
+  tester: [],
+  designer: [],
+  explorer: [],
+  cleaner: [],
+};
+
+export function getSkillsForAgent(
+  agent: string,
+  allSkills: LoadedSkill[]
+): LoadedSkill[] {
+  const skillNames = AGENT_SKILLS[agent] ?? [];
+  return skillNames
+    .map((name) => allSkills.find((s) => s.name === name))
+    .filter((s): s is LoadedSkill => s !== undefined);
+}
+
+export function injectSkillsToPrompt(
+  basePrompt: string,
+  skills: LoadedSkill[]
+): string {
+  if (skills.length === 0) return basePrompt;
+
+  const skillBlocks = skills
+    .map(
+      (skill) =>
+        `<skill name="${skill.name}">\n${skill.definition.template}\n</skill>`
+    )
+    .join("\n\n");
+
+  return `${basePrompt}\n\n## Injected Skills\n\n${skillBlocks}`;
+}
+
+export function wrapSkillContent(name: string, content: string): string {
+  return `<skill name="${name}">\n${content}\n</skill>`;
+}
+```
+
+### 8.5 Skills Index
+
+```typescript
+// src/skills/index.ts
+export * from "./types";
+export * from "./builtin";
+export * from "./loader";
+export * from "./injector";
+```
+
+---
 
 ### 9.0 ContextCollector
 

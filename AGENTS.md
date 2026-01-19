@@ -184,6 +184,7 @@ For each major section, the WHY should cover:
 ### Existing WHY Sections
 
 PLAN.md currently has WHY sections in:
+- Section 1 (Platform) - OpenCode vs MAG differences, permission model
 - Section 2 (Agents) - agent architecture design
 - Section 3 (Tools) - command design and separation rationale
 - Section 4 (MCP Servers) - server selection rationale
