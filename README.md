@@ -53,6 +53,29 @@ bun run build
 
 ## Installation
 
+### Quick Install (Recommended)
+
+```bash
+npx magnus-opus install
+```
+
+The interactive installer will:
+1. Add **magnus-opus** to your OpenCode plugins
+2. Optionally install **[opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth)** for free Claude/Gemini access via Google OAuth
+3. Optionally install **[mgrep](https://github.com/mixedbread-ai/mgrep)** for semantic code search
+
+### Non-Interactive Install
+
+```bash
+# With all companion tools
+npx magnus-opus install --no-tui --mgrep
+
+# Magnus Opus only (no companions)
+npx magnus-opus install --no-tui --no-antigravity --no-mgrep
+```
+
+### Manual Install
+
 Add to your OpenCode configuration (`~/.config/opencode/opencode.json`):
 
 ```json
@@ -60,6 +83,25 @@ Add to your OpenCode configuration (`~/.config/opencode/opencode.json`):
   "plugin": ["magnus-opus"]
 }
 ```
+
+### Post-Install Steps
+
+1. **Authenticate with Google** (if antigravity-auth installed):
+   ```bash
+   opencode auth login
+   ```
+
+2. **Enable semantic search** (if mgrep installed):
+   ```bash
+   mgrep watch  # Run in your project directory
+   ```
+
+### Companion Tools
+
+| Tool | Description | Default |
+|------|-------------|---------|
+| [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) | Free Claude Opus 4.5, Sonnet 4.5, and Gemini 3 via Google OAuth | Yes |
+| [mgrep](https://github.com/mixedbread-ai/mgrep) | Semantic code search by Mixedbread (replaces grep with natural language) | Prompted |
 
 ## Quick Start
 

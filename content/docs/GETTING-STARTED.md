@@ -3,23 +3,55 @@
 ## Prerequisites
 
 - [OpenCode](https://opencode.ai) installed
-- Node.js 20+
+- Node.js 20+ (or Bun)
 - A SvelteKit + Convex project (or willingness to create one)
 
 ## Installation
 
-### 1. Add to OpenCode
-
-Add magnus-opus to your OpenCode configuration:
+### Option 1: Interactive Installer (Recommended)
 
 ```bash
-# In ~/.config/opencode/opencode.json
+npx magnus-opus install
+```
+
+The installer will guide you through:
+1. Adding magnus-opus to your OpenCode plugins
+2. Installing **opencode-antigravity-auth** for free Claude/Gemini access (recommended)
+3. Installing **mgrep** for semantic code search (optional)
+
+### Option 2: Non-Interactive
+
+```bash
+# With all companion tools
+npx magnus-opus install --no-tui --mgrep
+
+# Magnus Opus only
+npx magnus-opus install --no-tui --no-antigravity --no-mgrep
+```
+
+### Option 3: Manual
+
+Add magnus-opus to your OpenCode configuration (`~/.config/opencode/opencode.json`):
+
+```json
 {
   "plugin": ["magnus-opus"]
 }
 ```
 
-### 2. Verify Installation
+### Post-Install Steps
+
+After installation, complete the setup:
+
+```bash
+# 1. Authenticate with Google (if antigravity-auth installed)
+opencode auth login
+
+# 2. Enable semantic search (if mgrep installed)
+mgrep watch  # Run in your project directory
+```
+
+### Verify Installation
 
 ```bash
 opencode
@@ -27,6 +59,25 @@ opencode
 ```
 
 You should see magnus-opus commands listed.
+
+## Companion Tools
+
+Magnus Opus works great on its own, but these optional companions enhance the experience:
+
+### opencode-antigravity-auth
+
+Provides **free access** to Claude Opus 4.5, Claude Sonnet 4.5, and Gemini 3 models via Google OAuth. This means you can use Magnus Opus's full agent capabilities without separate API subscriptions.
+
+- [GitHub](https://github.com/NoeFabris/opencode-antigravity-auth)
+- **Setup**: Run `opencode auth login` after installation
+
+### mgrep
+
+Semantic code search by [Mixedbread](https://mixedbread.com). Instead of regex-based grep, search your codebase with natural language queries like "where do we handle authentication?"
+
+- [GitHub](https://github.com/mixedbread-ai/mgrep)
+- **Setup**: Run `mgrep login` then `mgrep watch` in your project
+- **Note**: Syncs code to Mixedbread's cloud for indexing
 
 ## Quick Start
 
