@@ -400,3 +400,253 @@ Consequences
 - Delegating to mgrep avoids maintaining duplicate integration code
 - Plugin ordering ensures correct initialization sequence
 - Google models (both Claude via Antigravity and Gemini) become accessible
+
+---
+
+## Decision 021: Agent-Driven Consensus Analysis
+
+Status: Accepted
+Date: 2026-01-18
+
+Context
+Multi-model code review requires consolidating findings from multiple AI models and determining consensus on which issues are real problems vs false positives. MAG implements this via prompt engineering to a consolidation agent rather than runtime code.
+
+Research
+btca research on mag-cp confirmed:
+- MAG calculates consensus via the consolidation agent prompt, not runtime code
+- The consolidation agent reads all review files and applies semantic matching
+- Consensus levels: UNANIMOUS (100%), STRONG (67%+), DIVERGENT (<50%)
+- Quality gate parses the consolidated output for blocking issues
+
+Decision
+Follow the MAG pattern: consensus analysis is performed by the consolidation agent via prompt, not by runtime code.
+
+Implementation:
+1. `/review` command launches parallel reviewers (4-Message Pattern)
+2. Consolidation agent reads all review files and calculates per-issue consensus
+3. Agent outputs structured markdown with consensus counts
+4. Quality gate (`checkAllReviewersApprove`) parses the markdown for UNANIMOUS count
+5. Gate fails if any UNANIMOUS issues exist (all reviewers agree it must be fixed)
+
+Consensus levels (per-issue basis):
+- **UNANIMOUS**: All N models flag the same issue → MUST FIX (blocking)
+- **STRONG**: 2/3+ models agree → RECOMMENDED (non-blocking)
+- **DIVERGENT**: Only 1 model flags → OPTIONAL (may be false positive)
+
+Consequences
+- AI models handle semantic matching of similar issues across reviews (better than regex)
+- Quality gate code remains simple (just parse counts from markdown)
+- Consistent with MAG's proven approach
+- Flexible to different review formats without code changes
+
+---
+
+## Decision 022: Cost Gates Out of Scope
+
+Status: Accepted
+Date: 2026-01-18
+
+Context
+MAG includes cost estimation and cost gates before expensive operations (multi-model review, large-scale refactoring). This provides transparency and allows users to approve costs before proceeding.
+
+Decision
+Cost gates are out of scope for Magnus Opus v1.
+
+Rationale:
+1. OpenCode's pricing model differs from Claude Code's direct API billing
+2. Antigravity-auth provides free access to Claude/Gemini via Google quota
+3. OpenCode's built-in free models reduce cost concerns for most users
+4. Cost estimation adds complexity without clear user value in this context
+5. Can be added in a future version if users request it
+
+Consequences
+- Simpler implementation without cost tracking
+- Users with paid API keys should be aware of potential costs
+- No cost-based quality gates in workflows
+- Future enhancement opportunity if needed
+
+---
+
+## Decision 023: Expanded Agent Set for MAG Parity
+
+Status: Accepted
+Date: 2026-01-18
+
+Context
+Magnus Opus initially focused on SvelteKit+Convex development with a limited agent set. MAG provides additional specialized agents (debugger, devops, researcher, doc-writer) that enable standalone workflows and broader functionality.
+
+Research
+btca research on mag-cp revealed:
+- `debugger`: Read-only agent for systematic error analysis (no Write/Edit tools)
+- `devops`: Infrastructure specialist using opus model for extended thinking
+- `researcher`: Deep research agent for web and local investigation
+- `doc-writer`: Documentation specialist (no TodoWrite - orchestrator owns todo list)
+
+Decision
+Add four new agents to achieve MAG feature parity:
+
+| Agent | Model | Key Constraint |
+|-------|-------|----------------|
+| `debugger` | sonnet | Read-only (`permission: { write: "deny" }`) |
+| `devops` | opus | Full access, extended thinking for complex infra decisions |
+| `researcher` | sonnet | Full access, web + local investigation |
+| `doc-writer` | sonnet | No TodoWrite (orchestrator owns todo list) |
+
+Consequences
+- Enables standalone `/debug`, `/architect`, `/doc` commands
+- Broader workflow support beyond SvelteKit+Convex
+- Consistent with MAG's proven agent specialization patterns
+- Debugger's read-only constraint ensures separation of concerns (analyze vs fix)
+
+---
+
+## Decision 024: Configurable Iteration Limits
+
+Status: Accepted
+Date: 2026-01-18
+
+Context
+Quality gate loops (pass_or_fix, TDD, review) need iteration limits to prevent infinite loops while allowing user customization for complex projects.
+
+Research
+MAG uses:
+- Max 10 iterations for TDD loops
+- Max 5 rounds for user feedback loops
+- Escalation to user when limits exceeded
+
+Decision
+Add configurable iteration limits via `magnus-opus.json`:
+
+```json
+{
+  "workflowLimits": {
+    "maxIterations": 5,
+    "maxReviewRounds": 3,
+    "maxTddIterations": 10
+  }
+}
+```
+
+Key design choices:
+1. **No hard ceiling**: Users can configure any value (trust user judgment)
+2. **Sensible defaults**: 5/3/10 match MAG's proven patterns
+3. **Escalation behavior**: When limit reached, escalate to user with options (continue, more iterations, cancel)
+
+Consequences
+- Prevents infinite loops in automated workflows
+- Users can tune limits for project complexity
+- Consistent with MAG's iteration patterns
+- Clear escalation path when limits exceeded
+
+---
+
+## Decision 025: TDD Loop Formalization
+
+Status: Accepted
+Date: 2026-01-18
+
+Context
+MAG implements a sophisticated TDD loop as Phase 2.5 in the development workflow. The key innovation is distinguishing TEST_ISSUE from IMPLEMENTATION_ISSUE to determine whether to fix the test or the code.
+
+Research
+btca research on mag-cp confirmed:
+- 5-step loop: Write tests → Run → Check → Analyze → Fix → Repeat
+- test-architect writes tests in black-box mode (no implementation access)
+- Failure classification determines fix responsibility
+- Default to IMPLEMENTATION_ISSUE when ambiguous (tests are authoritative)
+
+Decision
+Formalize the TDD loop in PLAN.md Section 6.5 with:
+
+**Classification Criteria:**
+
+| Type | Indicators | Action |
+|------|------------|--------|
+| `TEST_ISSUE` | Test expects behavior not in requirements; test is flaky; test checks implementation details | test-architect fixes test |
+| `IMPLEMENTATION_ISSUE` | Code doesn't match requirements; violates API contract; missing functionality | developer fixes code |
+
+**Default Rule:** If ambiguous, classify as `IMPLEMENTATION_ISSUE` (tests are authoritative)
+
+**Iteration Limit:** Configurable via `workflowLimits.maxTddIterations` (default: 10)
+
+Consequences
+- Clear ownership of fixes (test-architect vs developer)
+- Prevents endless ping-pong between test and code fixes
+- Tests written blind to implementation ensure true black-box testing
+- Consistent with MAG's proven TDD patterns
+
+---
+
+## Decision 026: Hook System Adaptation for OpenCode
+
+Status: Accepted
+Date: 2026-01-18
+
+Context
+MAG uses Claude Code's hook system which differs from OpenCode's. Magnus Opus must adapt MAG patterns to OpenCode's available hooks while preserving equivalent functionality.
+
+Research
+MAG hooks:
+- `SessionStart`: Session initialization
+- `PreToolUse`: Before tool execution
+- `PostToolUse`: After tool execution
+- `SubagentStop`: Background task completion
+
+OpenCode hooks:
+- `event`: Session lifecycle events (session.created, session.deleted, session.idle)
+- `tool.execute.before`: Before tool execution
+- `tool.execute.after`: After tool execution
+- `chat.message`: Message interception for variants/keywords
+- `experimental.chat.system.transform`: System prompt modification
+- `experimental.chat.messages.transform`: Message modification
+
+Decision
+Document the following hook mapping:
+
+| MAG Hook | OpenCode Hook | Notes |
+|----------|---------------|-------|
+| `SessionStart` | `event` (session.created) | Same purpose |
+| `PreToolUse` | `tool.execute.before` | Same purpose |
+| `PostToolUse` | `tool.execute.after` | Same purpose |
+| `SubagentStop` | `event` (session.idle) | Different trigger point; requires stability detection |
+| - | `chat.message` | OpenCode-specific; used for variant selection |
+| - | `experimental.chat.*.transform` | OpenCode-specific; used for skill/context injection |
+
+Consequences
+- Clear mapping enables porting MAG patterns to OpenCode
+- OpenCode's additional hooks (`chat.message`, transforms) enable features MAG lacks
+- `SubagentStop` adaptation requires hybrid completion detection (see D015)
+- Documentation prevents confusion when referencing MAG patterns
+
+---
+
+## Decision 027: Standalone Commands for MAG Parity
+
+Status: Accepted
+Date: 2026-01-18
+
+Context
+MAG provides standalone commands (`/debug`, `/architect`, `/doc`) that enable focused workflows without running the full `/implement` pipeline. Magnus Opus initially bundled these capabilities into `/implement`.
+
+Research
+btca research on mag-cp confirmed:
+- `/dev:debug`: 6-phase systematic debugging workflow
+- `/dev:architect`: Standalone architecture planning
+- `/dev:doc`: Documentation generation with 15 best practices
+
+Decision
+Add three standalone commands matching MAG patterns:
+
+| Command | Primary Agent | Workflow |
+|---------|---------------|----------|
+| `/debug` | debugger → developer | 6-phase: Initialize → Analyze → Investigate → Fix → Validate → Report |
+| `/architect` | architect | 4-phase: Gather requirements → Design → Review → Document |
+| `/doc` | doc-writer | 5-phase: Context → Template → Generate → Verify → Write |
+
+**Critical `/debug` constraint:** Debugger agent analyzes (read-only); developer agent applies fixes. This separation ensures thorough analysis before any code changes.
+
+Consequences
+- Users can run focused workflows without full `/implement` overhead
+- Consistent with MAG's command structure
+- Enables better tooling discoverability
+- Debugger read-only constraint enforces analyze-then-fix pattern

@@ -255,6 +255,286 @@ Log errors for debugging:
 - ❌ Assume all external services are available
 - ❌ Skip informing user of limitations
 
+## Stack-Specific Recovery Patterns
+
+### SvelteKit Error Recovery
+
+#### SSR Hydration Mismatches
+
+**Symptoms:**
+- Console warning: "Hydration mismatch"
+- Content flickers on page load
+- Server and client render differently
+
+**Diagnosis:**
+```
+1. Check for browser-only APIs (window, document) in component code
+2. Look for conditional rendering based on non-deterministic values
+3. Verify load functions return consistent data
+4. Check for timezone/locale differences
+```
+
+**Recovery:**
+```svelte
+<!-- Wrap browser-only code in onMount -->
+<script>
+  import { onMount } from 'svelte';
+  let browserOnly = false;
+  
+  onMount(() => {
+    browserOnly = true;
+  });
+</script>
+
+{#if browserOnly}
+  <BrowserOnlyComponent />
+{/if}
+```
+
+#### Load Function Failures
+
+**Symptoms:**
+- 500 errors on page navigation
+- Data not available in page component
+- `$page.error` is set
+
+**Recovery:**
+```typescript
+// +page.server.ts
+export async function load({ fetch, params }) {
+  try {
+    const data = await fetchData(params.id);
+    return { data };
+  } catch (error) {
+    // Return fallback data or throw redirect
+    if (error instanceof NotFoundError) {
+      throw redirect(303, '/not-found');
+    }
+    // Log and return empty state
+    console.error('Load failed:', error);
+    return { data: null, error: 'Failed to load data' };
+  }
+}
+```
+
+### Convex Error Recovery
+
+#### Optimistic Update Rollback
+
+**Symptoms:**
+- UI shows data that server rejected
+- Inconsistent state after mutation
+- "Optimistic update failed" in logs
+
+**Recovery:**
+```typescript
+// Proper optimistic update with rollback
+const mutation = useMutation(api.todos.toggle);
+
+async function toggle(id: Id<"todos">) {
+  // Store previous state for rollback
+  const previousState = todos.find(t => t._id === id);
+  
+  // Optimistic update
+  setTodos(todos.map(t => 
+    t._id === id ? { ...t, completed: !t.completed } : t
+  ));
+  
+  try {
+    await mutation({ id });
+  } catch (error) {
+    // Rollback on failure
+    setTodos(todos.map(t => 
+      t._id === id ? previousState : t
+    ));
+    // Inform user
+    toast.error('Failed to update. Please try again.');
+  }
+}
+```
+
+#### Mutation Validation Errors
+
+**Symptoms:**
+- `ConvexError` thrown from mutation
+- Validation failed on server
+- Input rejected
+
+**Recovery:**
+```typescript
+// convex/todos.ts
+export const create = mutation({
+  args: {
+    title: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Validate before writing
+    if (args.title.trim().length === 0) {
+      throw new ConvexError({
+        code: "VALIDATION_ERROR",
+        message: "Title cannot be empty",
+        field: "title",
+      });
+    }
+    
+    // Proceed with creation
+    return await ctx.db.insert("todos", {
+      title: args.title.trim(),
+      completed: false,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+// Client-side handling
+try {
+  await createTodo({ title });
+} catch (error) {
+  if (error instanceof ConvexError) {
+    const data = error.data as { field?: string; message: string };
+    setFieldError(data.field, data.message);
+  }
+}
+```
+
+#### Query Index Issues
+
+**Symptoms:**
+- Slow queries
+- Full table scans in logs
+- Timeouts on large tables
+
+**Recovery:**
+```typescript
+// Add missing index in schema
+export default defineSchema({
+  todos: defineTable({
+    userId: v.id("users"),
+    completed: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_and_status", ["userId", "completed"]),
+});
+
+// Use index in query
+export const listByUser = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("todos")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+  },
+});
+```
+
+#### Action Timeout Recovery
+
+**Symptoms:**
+- Action takes too long
+- External API call hangs
+- 10-minute timeout exceeded
+
+**Recovery:**
+```typescript
+// Add timeout and retry logic
+export const fetchExternal = action({
+  args: { url: v.string() },
+  handler: async (ctx, args) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    
+    try {
+      const response = await fetch(args.url, {
+        signal: controller.signal,
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        throw new ConvexError({
+          code: "TIMEOUT",
+          message: "External API request timed out",
+        });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+});
+```
+
+## Debugging Strategies
+
+### Stack Trace Interpretation
+
+When analyzing errors, follow this process:
+
+```
+1. IDENTIFY ERROR TYPE
+   - Runtime error (TypeError, ReferenceError)
+   - Validation error (ConvexError, ZodError)
+   - Network error (fetch failed, timeout)
+   - Business logic error (custom errors)
+
+2. TRACE TO SOURCE
+   - Start from the first non-library frame
+   - Follow the call stack to your code
+   - Identify the exact line and context
+
+3. GATHER CONTEXT
+   - What inputs led to this error?
+   - What state was the application in?
+   - Is this reproducible?
+
+4. CLASSIFY ROOT CAUSE
+   - Input validation issue
+   - State management bug
+   - Race condition
+   - External dependency failure
+   - Logic error
+```
+
+### Data Flow Tracing
+
+For complex bugs, trace data through the system:
+
+```
+REQUEST → LOAD → STORE → COMPONENT → RENDER
+
+At each stage, verify:
+- Data arrives as expected
+- Data transforms correctly
+- No null/undefined leaks
+- Types match expectations
+```
+
+### Reproduction Strategies
+
+```
+1. MINIMAL REPRODUCTION
+   - Strip away unrelated code
+   - Isolate the failing component/function
+   - Create a test case
+
+2. BOUNDARY CONDITIONS
+   - Test with empty inputs
+   - Test with large inputs
+   - Test with special characters
+   - Test with null/undefined
+
+3. TIMING ISSUES
+   - Add delays to expose race conditions
+   - Test under slow network
+   - Test with throttled CPU
+```
+
 ## Summary
 
 Error recovery ensures:
@@ -263,3 +543,14 @@ Error recovery ensures:
 3. **Preservation** - Work is not lost
 4. **Recovery** - Sessions can be resumed
 5. **Degradation** - Partial functionality beats total failure
+
+### Stack-Specific Summary
+
+| Stack | Common Issues | Recovery Pattern |
+|-------|--------------|------------------|
+| SvelteKit | Hydration mismatch | onMount guard |
+| SvelteKit | Load function failure | Try-catch with fallback |
+| Convex | Optimistic rollback | Store previous state |
+| Convex | Validation error | Structured ConvexError |
+| Convex | Query performance | Add indexes |
+| Convex | Action timeout | AbortController + timeout |

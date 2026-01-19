@@ -224,6 +224,10 @@ const ORCHESTRATOR_PROMPT = `You are the Magnus Opus Orchestrator - a coordinato
 - tester: Browser testing
 - explorer: Codebase search
 - cleaner: Artifact cleanup
+- debugger: Error analysis (read-only, recommends fixes)
+- devops: Infrastructure and deployment
+- researcher: Deep research and investigation
+- doc-writer: Documentation generation
 
 ## Workflow Detection
 - UI_FOCUSED: component, page, layout, design, Figma, UI, styling
@@ -797,6 +801,335 @@ export function createCleanerAgent(
 export const cleanerAgent = createCleanerAgent();
 ```
 
+#### 2.2.12 Debugger Agent
+
+```typescript
+// src/agents/debugger.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_DEBUGGER_MODEL = "anthropic/claude-sonnet-4-5";
+
+const DEBUGGER_PROMPT = `You are the Magnus Opus Debugger - a language-agnostic debugging specialist.
+
+## Identity
+Universal Debugging Specialist
+
+## Expertise
+- Cross-language error analysis
+- Stack trace interpretation
+- Root cause investigation
+- Log correlation
+- Debugging strategy selection
+
+## Mission
+Analyze errors in any technology stack, trace root causes, and provide actionable fix recommendations WITHOUT modifying code.
+
+## Critical Constraint
+You are a DEBUGGER, not an IMPLEMENTER:
+- ✓ Analyze errors, read code, recommend fixes
+- ✗ NO code writing/editing, NO Write/Edit tools
+
+## Workflow Phases (use TodoWrite)
+1. **Parse Error** - Extract error info, stack trace, error category
+2. **Analyze** - List potential root causes, rank by likelihood
+3. **Investigate** - Trace code, check variables, use Grep for patterns
+4. **Confirm Root Cause** - Verify actual cause with evidence
+5. **Recommend Fix** - Propose minimal fix with examples and prevention advice
+
+## Stack-Specific Strategies
+
+**SvelteKit/TypeScript:**
+- Check for SSR hydration mismatches
+- Inspect load function errors
+- Verify $state/$derived usage
+- Check TanStack Query devtools for cache issues
+
+**Convex:**
+- Check validator errors in mutations
+- Verify index usage in queries
+- Look for optimistic update conflicts
+- Check action timeouts
+
+## Output Format
+Write to: \${SESSION_PATH}/debug-analysis.md
+Include: Error summary, root cause, evidence, recommended fix`;
+
+export function createDebuggerAgent(
+  model: string = DEFAULT_DEBUGGER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Language-agnostic debugging for error analysis and root cause investigation",
+    mode: "subagent",
+    model,
+    prompt: DEBUGGER_PROMPT,
+    color: "#F97316", // Orange
+    permission: {
+      write: "allow", // Only for writing reports
+      edit: "deny",
+      multiedit: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+      todowrite: "allow",
+      todoread: "allow",
+    },
+    skills: ["debugging-strategies", "error-recovery"],
+  };
+}
+
+export const debuggerAgent = createDebuggerAgent();
+```
+
+#### 2.2.13 DevOps Agent
+
+```typescript
+// src/agents/devops.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_DEVOPS_MODEL = "anthropic/claude-opus-4-5";
+
+const DEVOPS_PROMPT = `You are the Magnus Opus DevOps Agent - an infrastructure and deployment specialist.
+
+## Identity
+Senior DevOps Engineer and Cloud Infrastructure Architect
+
+## Expertise
+- Multi-cloud infrastructure (AWS, GCP, Azure, Vercel)
+- Container orchestration (Docker, Kubernetes)
+- Infrastructure as Code (Terraform, Pulumi)
+- CI/CD pipelines and deployment strategies
+- Convex deployment and configuration
+- Vercel/Cloudflare deployment
+- Cost optimization and capacity planning
+- Security best practices
+
+## Mission
+Provide expert infrastructure guidance using extended thinking for complex decisions, deliver copy-paste ready CLI commands with IaC alternatives.
+
+## 7-Phase Workflow (use TodoWrite)
+1. **Analyze Requirements** - Understand deployment needs
+2. **Research Best Practices** - Use WebSearch for current patterns
+3. **Design Solution** - Architecture decision
+4. **Generate CLI Commands** - Copy-paste ready commands
+5. **Provide IaC Alternatives** - Terraform/Pulumi options
+6. **Cost Estimation** - Estimate monthly costs
+7. **Present Solution** - Summary with next steps
+
+## Stack-Specific Patterns
+
+**Convex Deployment:**
+- Use \`npx convex deploy\` for production
+- Configure environment variables via dashboard
+- Set up scheduled functions for cron jobs
+- Use \`convex env\` for environment management
+
+**Vercel Deployment:**
+- Use \`vercel --prod\` for production
+- Configure environment variables via CLI or dashboard
+- Set up preview deployments for PRs
+- Use edge functions for performance
+
+## Output Format
+Write to: \${SESSION_PATH}/deployment-plan.md
+Include: Commands, IaC alternatives, cost estimate, security notes`;
+
+export function createDevopsAgent(
+  model: string = DEFAULT_DEVOPS_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Infrastructure and DevOps specialist with extended thinking",
+    mode: "subagent",
+    model,
+    prompt: DEVOPS_PROMPT,
+    color: "#3B82F6", // Blue
+    permission: {
+      write: "allow",
+      edit: "allow",
+      multiedit: "allow",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+      webfetch: "allow",
+      todowrite: "allow",
+      todoread: "allow",
+    },
+    thinking: {
+      type: "enabled",
+      budgetTokens: 32000,
+    },
+    skills: ["convex"],
+  };
+}
+
+export const devopsAgent = createDevopsAgent();
+```
+
+#### 2.2.14 Researcher Agent
+
+```typescript
+// src/agents/researcher.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_RESEARCHER_MODEL = "anthropic/claude-sonnet-4-5";
+
+const RESEARCHER_PROMPT = `You are the Magnus Opus Researcher - a deep research agent for investigation.
+
+## Identity
+Deep Research Specialist
+
+## Expertise
+- Web search and source evaluation
+- Local codebase investigation
+- Source quality assessment
+- Evidence gathering with citations
+- Multi-source cross-referencing
+- ReAct reasoning pattern
+
+## Mission
+Gather comprehensive evidence on specific research sub-questions via web sources and local resources with proper citations.
+
+## 6-Phase Workflow (use TodoWrite)
+1. **Understand Question** - Parse research question, identify key terms
+2. **Plan Search Strategy** - Define search queries and sources
+3. **Execute Searches** - Web search and/or local grep
+4. **Extract Findings** - Pull relevant information with citations
+5. **Cross-Reference** - Verify across multiple sources
+6. **Write Report** - Structured findings document
+
+## Source Citation Rules
+- NEVER present findings without source citation
+- Include URL or file path for every claim
+- Rate source quality (official docs > blog posts > forums)
+- Note when sources disagree
+
+## ReAct Pattern
+Think → Act → Observe → Think
+
+## Output Format
+Write to: \${SESSION_PATH}/research-findings.md
+Include: Executive summary, detailed findings with citations, confidence levels, knowledge gaps`;
+
+export function createResearcherAgent(
+  model: string = DEFAULT_RESEARCHER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Deep research agent for web exploration and local investigation",
+    mode: "subagent",
+    model,
+    prompt: RESEARCHER_PROMPT,
+    color: "#3B82F6", // Blue
+    permission: {
+      write: "allow",
+      edit: "deny",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+      webfetch: "allow",
+      todowrite: "allow",
+      todoread: "allow",
+    },
+    skills: ["universal-patterns"],
+  };
+}
+
+export const researcherAgent = createResearcherAgent();
+```
+
+#### 2.2.15 Doc Writer Agent
+
+```typescript
+// src/agents/doc-writer.ts
+import type { MagnusAgentConfig } from "./types";
+
+export const DEFAULT_DOC_WRITER_MODEL = "anthropic/claude-sonnet-4-5";
+
+const DOC_WRITER_PROMPT = `You are the Magnus Opus Doc Writer - a documentation specialist.
+
+## Identity
+Documentation Writer Specialist
+
+## Expertise
+- Technical writing (Google/Microsoft style guides)
+- Progressive disclosure (three-tier structure)
+- Language-specific documentation (TSDoc, JSDoc)
+- Template-based documentation generation
+- Code example creation with expected output
+- Troubleshooting documentation
+
+## Mission
+Generate clear, accurate, and comprehensive documentation following 15 research-backed best practices. Prioritize time-to-first-success with 5-minute quick starts.
+
+## Critical Constraints
+- NO TodoWrite - orchestrator owns the todo list exclusively
+- NEVER hallucinate - verify features exist in source code before documenting
+- Apply all 15 best practices
+
+## 15 Best Practices
+1. Active voice, present tense
+2. 5-minute quick starts
+3. Progressive disclosure (overview → details → reference)
+4. Language-specific tools (TSDoc for TypeScript)
+5. Code examples with expected output
+6. Error documentation with solutions
+7. Version compatibility notes
+8. Prerequisites clearly stated
+9. Copy-pasteable commands
+10. Visual aids where helpful
+11. Consistent terminology
+12. Searchable headings
+13. Cross-references to related docs
+14. Changelog for breaking changes
+15. Troubleshooting section
+
+## Documentation Types
+- README - Project overview, quick start
+- API Docs - TSDoc/JSDoc for functions
+- Tutorials - Step-by-step guides
+- ADRs - Architecture Decision Records
+- Changelogs - Version history
+- Error Docs - Error codes and solutions
+- Troubleshooting - Common issues
+
+## 5-Phase Workflow
+1. **Context** - Read standards, source code, identify doc type
+2. **Template Selection** - Choose appropriate template
+3. **Generate** - Write following best practices
+4. **Verify** - Self-check against critical criteria
+5. **Write** - Output to file with summary
+
+## Output Format
+Write to: Appropriate location based on doc type
+Include: Title, purpose, content, examples`;
+
+export function createDocWriterAgent(
+  model: string = DEFAULT_DOC_WRITER_MODEL
+): MagnusAgentConfig {
+  return {
+    description: "Generate documentation following 15 research-backed best practices",
+    mode: "subagent",
+    model,
+    prompt: DOC_WRITER_PROMPT,
+    color: "#22C55E", // Green
+    permission: {
+      write: "allow",
+      edit: "allow",
+      multiedit: "allow",
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      bash: "allow",
+      // NO todowrite - orchestrator owns the todo list
+    },
+    skills: ["documentation-standards"],
+  };
+}
+
+export const docWriterAgent = createDocWriterAgent();
+```
+
 ### 2.3 Agent Aggregation
 
 ```typescript
@@ -815,6 +1148,10 @@ import { planReviewerAgent, createPlanReviewerAgent } from "./plan-reviewer";
 import { testerAgent, createTesterAgent } from "./tester";
 import { explorerAgent, createExplorerAgent } from "./explorer";
 import { cleanerAgent, createCleanerAgent } from "./cleaner";
+import { debuggerAgent, createDebuggerAgent } from "./debugger";
+import { devopsAgent, createDevopsAgent } from "./devops";
+import { researcherAgent, createResearcherAgent } from "./researcher";
+import { docWriterAgent, createDocWriterAgent } from "./doc-writer";
 
 export const builtinAgents: Record<string, MagnusAgentConfig> = {
   orchestrator: orchestratorAgent,
@@ -828,6 +1165,10 @@ export const builtinAgents: Record<string, MagnusAgentConfig> = {
   tester: testerAgent,
   explorer: explorerAgent,
   cleaner: cleanerAgent,
+  debugger: debuggerAgent,
+  devops: devopsAgent,
+  researcher: researcherAgent,
+  "doc-writer": docWriterAgent,
 };
 
 export function createBuiltinAgents(
@@ -875,6 +1216,10 @@ function getAgentCreator(name: string): ((model: string) => MagnusAgentConfig) |
     tester: createTesterAgent,
     explorer: createExplorerAgent,
     cleaner: createCleanerAgent,
+    debugger: createDebuggerAgent,
+    devops: createDevopsAgent,
+    researcher: createResearcherAgent,
+    "doc-writer": createDocWriterAgent,
   };
   return creators[name] ?? null;
 }
@@ -891,6 +1236,10 @@ export * from "./plan-reviewer";
 export * from "./tester";
 export * from "./explorer";
 export * from "./cleaner";
+export * from "./debugger";
+export * from "./devops";
+export * from "./researcher";
+export * from "./doc-writer";
 ```
 
 ---
@@ -1126,16 +1475,39 @@ ${args.figma_url ? `Compare against Figma: ${args.figma_url}` : ""}
 
 ### 3.5 /review Command
 
+<!-- =============================================================================
+WHY: Agent-Driven Consensus Analysis (DECISIONS.md D021)
+================================================================================
+
+1. MAG PATTERN: CONSOLIDATION VIA PROMPT
+   - MAG calculates consensus via the consolidation agent, not runtime code
+   - The consolidation agent reads all review files and applies consensus rules
+   - Quality gate parses the consolidated output for blocking issues
+
+2. CONSENSUS LEVELS (per-issue basis)
+   - UNANIMOUS: All N models flag the same issue → MUST FIX
+   - STRONG: 2/3+ models agree → RECOMMENDED
+   - DIVERGENT: Only 1 model flags → OPTIONAL (may be false positive)
+
+3. WHY NOT CODE-BASED
+   - AI models are better at semantic matching of similar issues across reviews
+   - Avoids complex issue-deduplication logic in code
+   - More flexible to different review formats
+
+============================================================================= -->
+
 ```typescript
 // src/tools/review.ts
 import { tool } from "@opencode-ai/plugin";
+import { generateSessionId, createSessionDirectory } from "../sessions";
 
 export const review = tool({
   description: `Multi-model code review with consensus analysis.
 
 Usage: /review <file or directory path>
 
-Runs parallel reviews with multiple AI models and consolidates findings.`,
+Runs parallel reviews with multiple AI models and consolidates findings
+using MAG-style consensus analysis (UNANIMOUS/STRONG/DIVERGENT).`,
 
   args: {
     path: tool.schema.string().describe("File or directory to review"),
@@ -1146,34 +1518,83 @@ Runs parallel reviews with multiple AI models and consolidates findings.`,
   async execute(args, ctx) {
     const defaultModels = ["anthropic/claude-sonnet-4-5", "opencode/grok-code", "google/gemini-2.5-flash"];
     const models = args.models ?? defaultModels;
+    const sessionId = generateSessionId("review", args.path);
+    const sessionDir = await createSessionDirectory(sessionId);
 
     ctx.metadata?.({
       title: `/review: ${args.path}`,
-      metadata: { path: args.path, models },
+      metadata: { path: args.path, models, sessionId },
     });
 
     return `Starting multi-model code review
 
 **Path:** ${args.path}
 **Models:** ${models.join(", ")}
+**Session:** ${sessionId}
 
 <system-instruction>
-Launch parallel Task calls to the reviewer agent, one for each model.
-Use the 4-Message Pattern:
+Use the 4-Message Pattern for parallel multi-model review:
 
-Message 1 (current): Preparation complete
-Message 2: Launch ${models.length} parallel Task calls with different models
-Message 3: Consolidate results with consensus analysis
-Message 4: Present findings to user
+## MESSAGE 1: Preparation (Bash Only)
 
-For each model, use this prompt:
-"Review the code at: ${args.path}
+Create review workspace and gather context:
+\`\`\`bash
+mkdir -p ${sessionDir}/reviews
+\`\`\`
+
+## MESSAGE 2: Parallel Execution (Task Only)
+
+Launch ALL reviewers in a SINGLE message - they run simultaneously!
+${models.map((model, i) => `
+Task: reviewer
+  Model: ${model}
+  Prompt: "Review the code at: ${args.path}
 
 Provide a structured review with:
 - Verdict: APPROVED | NEEDS_REVISION | MAJOR_CONCERNS
 - Issues by severity (CRITICAL, MAJOR, MINOR, NITPICK)
 - Specific file:line references
-- Suggested fixes"
+- Suggested fixes
+
+Write your review to: ${sessionDir}/reviews/${model.replace(/\//g, "-")}.md"
+`).join("\n---\n")}
+
+## MESSAGE 3: Consolidation (Task Only)
+
+After all reviews complete, launch consolidation:
+
+Task: reviewer
+  Prompt: "Consolidate the ${models.length} code reviews in ${sessionDir}/reviews/
+
+Apply consensus analysis for EACH issue found:
+- **UNANIMOUS**: All ${models.length} models flag this issue → MUST FIX (blocking)
+- **STRONG**: ${Math.ceil(models.length * 2/3)}+ models agree → RECOMMENDED
+- **DIVERGENT**: Only 1 model flags → OPTIONAL (review before fixing)
+
+Output format for ${sessionDir}/consolidated-review.md:
+
+## Consensus Summary
+- Total unique issues: N
+- UNANIMOUS issues: N (must fix before proceeding)
+- STRONG consensus issues: N
+- DIVERGENT issues: N
+
+## UNANIMOUS Issues (MUST FIX)
+[List issues flagged by ALL reviewers]
+
+## STRONG Consensus Issues (RECOMMENDED)
+[List issues flagged by 2/3+ reviewers]
+
+## DIVERGENT Issues (OPTIONAL)
+[List issues flagged by only 1 reviewer - may be false positives]
+
+## Individual Review Summaries
+[Brief summary of each model's verdict]"
+
+## MESSAGE 4: Present Results
+
+Read ${sessionDir}/consolidated-review.md and present to user.
+If UNANIMOUS issues exist, the code review gate FAILS - fixes required.
 </system-instruction>`;
   },
 });
@@ -1222,7 +1643,357 @@ With session_id: Deletes that session`,
 });
 ```
 
-### 3.7 /help Command
+### 3.7 /debug Command
+
+<!-- =============================================================================
+WHY: Standalone Debug Command (DECISIONS.md D027)
+================================================================================
+
+1. MAG PATTERN: 6-PHASE DEBUGGING WORKFLOW
+   - Systematic debugging separate from implementation
+   - Debugger agent is READ-ONLY (analyzes but doesn't fix)
+   - Developer agent applies fixes after root cause confirmed
+   - Clear separation of concerns
+
+2. PHASES
+   0. Initialize - Setup session, capture error context
+   1. Analyze - Parse error, list potential causes
+   2. Investigate - Trace root cause, get user confirmation
+   3. Fix - Developer agent applies minimal fix
+   4. Validate - Run reproduction, tests
+   5. Report - Document session
+
+============================================================================= -->
+
+```typescript
+// src/tools/debug.ts
+import { tool } from "@opencode-ai/plugin";
+import { generateSessionId, createSessionDirectory } from "../sessions";
+
+export const debug = tool({
+  description: `Systematic debugging with root cause analysis.
+
+Usage: /debug <error description or stack trace>
+
+This command follows a 6-phase workflow:
+1. Initialize - Capture error context, detect stack
+2. Analyze - Parse error, list potential root causes
+3. Investigate - Trace root cause with evidence
+4. Fix - Apply minimal fix (via developer agent)
+5. Validate - Verify fix resolves issue
+6. Report - Document debugging session
+
+IMPORTANT: The debugger agent ANALYZES but does NOT fix code.
+The developer agent applies fixes after root cause is confirmed.`,
+
+  args: {
+    error: tool.schema.string().describe("Error message, stack trace, or issue description"),
+    file_path: tool.schema.string().optional().describe("Specific file where error occurs"),
+    max_iterations: tool.schema.number().optional().describe("Max fix-validate cycles (default: 2)"),
+  },
+
+  async execute(args, ctx) {
+    const sessionId = generateSessionId("debug", args.error.slice(0, 30));
+    const sessionDir = await createSessionDirectory(sessionId);
+    const maxIterations = args.max_iterations ?? 2;
+
+    ctx.metadata?.({
+      title: `/debug: ${args.error.slice(0, 40)}...`,
+      metadata: { sessionId, filePath: args.file_path, maxIterations },
+    });
+
+    return `Debug session created: ${sessionId}
+
+**Error:** ${args.error.slice(0, 100)}${args.error.length > 100 ? "..." : ""}
+${args.file_path ? `**File:** ${args.file_path}` : ""}
+**Max Fix Iterations:** ${maxIterations}
+
+**Session Directory:** ${sessionDir}
+
+<system-instruction>
+Execute the 6-phase debugging workflow:
+
+## PHASE 0: Initialize
+Create debug context file:
+\`\`\`bash
+mkdir -p ${sessionDir}
+\`\`\`
+
+## PHASE 1: Analyze (Task → debugger agent)
+Task: debugger
+  Prompt: "Analyze this error and list potential root causes:
+
+Error: ${args.error}
+${args.file_path ? `File: ${args.file_path}` : ""}
+
+Follow the 5-phase analysis workflow:
+1. Parse error message and stack trace
+2. Categorize error type
+3. List potential root causes ranked by likelihood
+4. Identify relevant files to investigate
+5. Suggest investigation paths
+
+Write analysis to: ${sessionDir}/error-analysis.md
+
+CRITICAL: You are a DEBUGGER, not an IMPLEMENTER.
+- ✓ Analyze errors, read code, recommend fixes
+- ✗ Do NOT write or edit any code"
+
+## PHASE 2: Investigate (Read analysis, then Task → debugger agent)
+After analysis, investigate top causes:
+
+Task: debugger
+  Prompt: "Investigate the root cause based on ${sessionDir}/error-analysis.md
+
+For each potential cause (in likelihood order):
+1. Read relevant source files
+2. Use Grep to find related patterns
+3. Trace data/control flow
+4. Verify or eliminate each hypothesis
+
+Confirm the actual root cause with evidence.
+Write findings to: ${sessionDir}/root-cause.md"
+
+## USER CONFIRMATION GATE
+Ask user: "Root cause identified. Proceed with fix?"
+
+## PHASE 3: Fix (Task → developer agent, NOT debugger)
+Task: developer (or backend for Convex issues)
+  Prompt: "Apply a minimal fix for the root cause in ${sessionDir}/root-cause.md
+
+Requirements:
+- Minimal changes only
+- Add regression test if applicable
+- Document the fix inline"
+
+## PHASE 4: Validate
+Run reproduction steps and tests. If issue persists:
+- Iteration ${maxIterations > 1 ? "1-" + maxIterations : "1"}: Return to Phase 3
+- After ${maxIterations} iterations: Escalate to user
+
+## PHASE 5: Report
+Write debug report to: ${sessionDir}/debug-report.md
+Include: Issue summary, root cause, fix applied, files modified, prevention recommendations
+</system-instruction>`;
+  },
+});
+```
+
+### 3.8 /architect Command
+
+```typescript
+// src/tools/architect.ts
+import { tool } from "@opencode-ai/plugin";
+import { generateSessionId, createSessionDirectory } from "../sessions";
+
+export const architect = tool({
+  description: `Standalone architecture planning without implementation.
+
+Usage: /architect <feature or system description>
+
+Creates a comprehensive architecture plan including:
+1. Requirements analysis
+2. Data model design
+3. API contracts
+4. Component structure
+5. Implementation phases
+
+Use this when you want planning only, without triggering implementation.`,
+
+  args: {
+    description: tool.schema.string().describe("Feature or system to architect"),
+    scope: tool.schema.enum(["feature", "system", "refactor"]).optional()
+      .describe("Scope of architecture (default: feature)"),
+  },
+
+  async execute(args, ctx) {
+    const scope = args.scope ?? "feature";
+    const sessionId = generateSessionId("arch", args.description.slice(0, 20));
+    const sessionDir = await createSessionDirectory(sessionId);
+
+    ctx.metadata?.({
+      title: `/architect: ${args.description.slice(0, 30)}...`,
+      metadata: { sessionId, scope },
+    });
+
+    return `Architecture session created: ${sessionId}
+
+**Scope:** ${scope}
+**Description:** ${args.description}
+
+**Session Directory:** ${sessionDir}
+
+<system-instruction>
+Execute standalone architecture planning:
+
+## PHASE 1: Requirements Gathering
+Task: architect
+  Prompt: "Analyze requirements for: ${args.description}
+
+Scope: ${scope}
+
+1. Restate the requirements in your own words
+2. Identify explicit requirements
+3. Infer implicit requirements
+4. List assumptions that need validation
+5. Identify potential risks and dependencies
+
+Ask clarifying questions if critical information is missing.
+
+Write to: ${sessionDir}/requirements.md"
+
+## USER CHECKPOINT
+Present requirements summary. Ask: "Are these requirements accurate? Any additions?"
+
+## PHASE 2: Design
+Task: architect
+  Prompt: "Create architecture design based on ${sessionDir}/requirements.md
+
+Include:
+- Data Model: Convex schema with tables, indexes, relationships
+- API Contracts: Query/mutation signatures with input/output types
+- Component Structure: SvelteKit routes and components
+- State Management: $state, $derived, stores
+- Error Handling: Error types and recovery strategies
+
+Write to: ${sessionDir}/architecture.md"
+
+## PHASE 3: Review
+Task: plan-reviewer
+  Prompt: "Review the architecture in ${sessionDir}/architecture.md
+
+Check for:
+- Missing edge cases
+- Scalability concerns
+- Security issues
+- Consistency with SvelteKit + Convex patterns
+- Implementation order correctness
+
+Write feedback to: ${sessionDir}/architecture-review.md"
+
+## PHASE 4: Document
+Create final deliverables:
+- ${sessionDir}/implementation-plan.md - Comprehensive plan
+- ${sessionDir}/quick-reference.md - Checklist for developers
+
+Present summary to user with next steps.
+</system-instruction>`;
+  },
+});
+```
+
+### 3.9 /doc Command
+
+```typescript
+// src/tools/doc.ts
+import { tool } from "@opencode-ai/plugin";
+import { generateSessionId, createSessionDirectory } from "../sessions";
+
+export const doc = tool({
+  description: `Generate documentation following 15 research-backed best practices.
+
+Usage: /doc <topic or path>
+
+Supports: README, API docs, tutorials, ADRs, changelogs, error docs, troubleshooting.
+
+The doc-writer agent will:
+1. Analyze the target code/topic
+2. Select appropriate documentation template
+3. Generate documentation with examples
+4. Verify against quality criteria`,
+
+  args: {
+    topic: tool.schema.string().describe("Topic, file path, or function to document"),
+    type: tool.schema.enum(["readme", "api", "tutorial", "adr", "changelog", "error", "troubleshooting"])
+      .optional().describe("Documentation type (auto-detected if not specified)"),
+    output_path: tool.schema.string().optional().describe("Output file path (auto-generated if not specified)"),
+  },
+
+  async execute(args, ctx) {
+    const sessionId = generateSessionId("doc", args.topic.slice(0, 20));
+    const sessionDir = await createSessionDirectory(sessionId);
+    const docType = args.type ?? "auto";
+
+    ctx.metadata?.({
+      title: `/doc: ${args.topic.slice(0, 30)}...`,
+      metadata: { sessionId, docType, outputPath: args.output_path },
+    });
+
+    return `Documentation session created: ${sessionId}
+
+**Topic:** ${args.topic}
+**Type:** ${docType === "auto" ? "Auto-detect" : docType}
+${args.output_path ? `**Output:** ${args.output_path}` : ""}
+
+**Session Directory:** ${sessionDir}
+
+<system-instruction>
+Execute documentation generation workflow:
+
+## PHASE 1: Context (Task → doc-writer)
+Task: doc-writer
+  Prompt: "Analyze the documentation target: ${args.topic}
+
+1. Read the source code or understand the topic
+2. Identify the appropriate documentation type${docType !== "auto" ? ` (requested: ${docType})` : ""}
+3. Gather all necessary context:
+   - Function signatures
+   - Usage patterns
+   - Related files
+   - Existing documentation
+
+Write context notes to: ${sessionDir}/doc-context.md"
+
+## PHASE 2: Template Selection
+Based on context, select template:
+- README: Project overview, quick start, installation
+- API: TSDoc/JSDoc for functions, classes, modules
+- Tutorial: Step-by-step guide with code examples
+- ADR: Architecture Decision Record with context, decision, consequences
+- Changelog: Version history with breaking changes
+- Error: Error codes with causes and solutions
+- Troubleshooting: Common issues with diagnostic steps
+
+## PHASE 3: Generate (Task → doc-writer)
+Task: doc-writer
+  Prompt: "Generate documentation based on ${sessionDir}/doc-context.md
+
+Apply ALL 15 best practices:
+1. Active voice, present tense
+2. 5-minute quick start where applicable
+3. Progressive disclosure (overview → details → reference)
+4. Language-specific tools (TSDoc for TypeScript)
+5. Code examples with expected output
+6. Error documentation with solutions
+7. Version compatibility notes
+8. Prerequisites clearly stated
+9. Copy-pasteable commands
+10. Visual aids where helpful
+11. Consistent terminology
+12. Searchable headings
+13. Cross-references to related docs
+14. Changelog for breaking changes
+15. Troubleshooting section
+
+Write draft to: ${sessionDir}/doc-draft.md"
+
+## PHASE 4: Verify
+Self-check against critical criteria:
+- All code examples tested/valid
+- No hallucinated features
+- Prerequisites complete
+- Links valid
+
+## PHASE 5: Write
+Write final documentation to: ${args.output_path ?? "appropriate location based on type"}
+
+Present summary with documentation location.
+</system-instruction>`;
+  },
+});
+```
+
+### 3.10 /help Command
 
 ```typescript
 // src/tools/help.ts
@@ -1252,6 +2023,9 @@ export const help = tool({
 | /validate-ui | Design validation |
 | /review | Multi-model code review |
 | /cleanup | Session artifact cleanup |
+| /debug | Systematic debugging with root cause analysis |
+| /architect | Standalone architecture planning |
+| /doc | Documentation generation |
 | /help | This documentation |`);
     }
 
@@ -1302,7 +2076,7 @@ ${sections.join("\n\n")}`;
 });
 ```
 
-### 3.8 Tool Aggregation
+### 3.11 Tool Aggregation
 
 ```typescript
 // src/tools/index.ts
@@ -1311,6 +2085,9 @@ import { implementApi } from "./implement-api";
 import { validateUi } from "./validate-ui";
 import { review } from "./review";
 import { cleanup } from "./cleanup";
+import { debug } from "./debug";
+import { architect } from "./architect";
+import { doc } from "./doc";
 import { help } from "./help";
 
 export const builtinTools = {
@@ -1319,6 +2096,9 @@ export const builtinTools = {
   "validate-ui": validateUi,
   review,
   cleanup,
+  debug,
+  architect,
+  doc,
   help,
 };
 
@@ -1327,6 +2107,9 @@ export * from "./implement-api";
 export * from "./validate-ui";
 export * from "./review";
 export * from "./cleanup";
+export * from "./debug";
+export * from "./architect";
+export * from "./doc";
 export * from "./help";
 ```
 
@@ -1596,6 +2379,16 @@ export const SessionSettingsSchema = z.object({
   retentionDays: z.number().optional(),
 });
 
+// Workflow iteration limits (DECISIONS.md D024)
+export const WorkflowLimitsSchema = z.object({
+  // Max iterations for pass_or_fix quality gate loops
+  maxIterations: z.number().min(1).default(5),
+  // Max rounds of code review before proceeding
+  maxReviewRounds: z.number().min(1).default(3),
+  // Max iterations for TDD red-green-refactor cycles
+  maxTddIterations: z.number().min(1).default(10),
+});
+
 // Main config schema
 export const MagnusOpusConfigSchema = z.object({
   // Agent overrides by name
@@ -1615,11 +2408,15 @@ export const MagnusOpusConfigSchema = z.object({
   
   // Session configuration
   sessionSettings: SessionSettingsSchema.optional(),
+  
+  // Workflow iteration limits (DECISIONS.md D024)
+  workflowLimits: WorkflowLimitsSchema.optional(),
 });
 
 export type MagnusOpusConfig = z.infer<typeof MagnusOpusConfigSchema>;
 export type AgentOverride = z.infer<typeof AgentOverrideSchema>;
 export type CategoryConfig = z.infer<typeof CategoryConfigSchema>;
+export type WorkflowLimits = z.infer<typeof WorkflowLimitsSchema>;
 
 // Default configuration
 export const DEFAULT_CONFIG: MagnusOpusConfig = {
@@ -1637,6 +2434,11 @@ export const DEFAULT_CONFIG: MagnusOpusConfig = {
     includeDescriptor: true,
     autoCleanup: false,
     retentionDays: 30,
+  },
+  workflowLimits: {
+    maxIterations: 5,
+    maxReviewRounds: 3,
+    maxTddIterations: 10,
   },
 };
 ```
@@ -1966,14 +2768,42 @@ export function getPhasesForWorkflow(workflowType: string): PhaseDefinition[] {
 
 ### 6.3 Quality Gate Implementations
 
+<!-- =============================================================================
+WHY: Consolidated Review Parsing (DECISIONS.md D021)
+================================================================================
+
+Following the MAG pattern, consensus analysis is performed by the consolidation
+agent (via prompt), not by runtime code. The quality gate parses the agent's
+consolidated output to check for blocking issues.
+
+The gate checks for:
+1. UNANIMOUS issues - these are blocking (MUST FIX)
+2. Overall verdict from the consolidation
+
+This keeps the code simple while leveraging AI for semantic issue matching.
+
+============================================================================= -->
+
 ```typescript
 // src/workflows/gates.ts
 import type { MagnusOpusConfig } from "../config/schema";
+import { readFile, writeFile } from "fs/promises";
+import { join } from "path";
 
 export interface GateResult {
   passed: boolean;
   reason?: string;
   data?: unknown;
+}
+
+export type ConsensusLevel = "UNANIMOUS" | "STRONG" | "DIVERGENT";
+
+export interface ConsolidatedReviewResult {
+  unanimousCount: number;
+  strongCount: number;
+  divergentCount: number;
+  totalIssues: number;
+  hasBlockingIssues: boolean;
 }
 
 export async function checkUserApproval(
@@ -1985,31 +2815,82 @@ export async function checkUserApproval(
   return { passed: true, reason: "User approval pending via AskUserQuestion" };
 }
 
+/**
+ * Parse the consolidated review output to check for blocking issues.
+ * 
+ * Following the MAG pattern, consensus analysis is done by the consolidation
+ * agent. This gate simply parses the output to determine pass/fail.
+ * 
+ * Blocking conditions:
+ * - Any UNANIMOUS issues exist (all reviewers agree it must be fixed)
+ * - Parsing fails (conservative approach)
+ */
 export async function checkAllReviewersApprove(
-  reviews: Array<{ model: string; verdict: string; issues: unknown[] }>
+  sessionDir: string
 ): Promise<GateResult> {
-  const verdicts = reviews.map((r) => r.verdict);
-  const criticalIssues = reviews.flatMap((r) =>
-    (r.issues as Array<{ severity: string }>).filter((i) => i.severity === "CRITICAL")
-  );
-
-  if (criticalIssues.length > 0) {
+  const consolidatedPath = join(sessionDir, "consolidated-review.md");
+  
+  try {
+    const content = await readFile(consolidatedPath, "utf-8");
+    const result = parseConsolidatedReview(content);
+    
+    if (result.unanimousCount > 0) {
+      return {
+        passed: false,
+        reason: `${result.unanimousCount} UNANIMOUS issues require fixes before proceeding`,
+        data: result,
+      };
+    }
+    
+    // STRONG and DIVERGENT issues don't block, but are reported
+    return { 
+      passed: true,
+      reason: result.strongCount > 0 
+        ? `Passed with ${result.strongCount} STRONG consensus recommendations`
+        : "All reviewers approve",
+      data: result,
+    };
+  } catch (error) {
+    // If we can't read the consolidated review, fail conservatively
     return {
       passed: false,
-      reason: `${criticalIssues.length} critical issues found`,
-      data: criticalIssues,
+      reason: `Could not read consolidated review: ${error instanceof Error ? error.message : "Unknown error"}`,
     };
   }
+}
 
-  const majorConcerns = verdicts.filter((v) => v === "MAJOR_CONCERNS").length;
-  if (majorConcerns >= reviews.length / 2) {
-    return {
-      passed: false,
-      reason: `${majorConcerns}/${reviews.length} reviewers have major concerns`,
-    };
-  }
-
-  return { passed: true };
+/**
+ * Parse the consolidated review markdown to extract consensus counts.
+ * 
+ * Expected format (from consolidation agent):
+ * ```
+ * ## Consensus Summary
+ * - Total unique issues: N
+ * - UNANIMOUS issues: N (must fix before proceeding)
+ * - STRONG consensus issues: N
+ * - DIVERGENT issues: N
+ * ```
+ */
+function parseConsolidatedReview(content: string): ConsolidatedReviewResult {
+  // Extract counts from the consensus summary section
+  const unanimousMatch = content.match(/UNANIMOUS issues:\s*(\d+)/i);
+  const strongMatch = content.match(/STRONG consensus issues:\s*(\d+)/i);
+  const divergentMatch = content.match(/DIVERGENT issues:\s*(\d+)/i);
+  const totalMatch = content.match(/Total unique issues:\s*(\d+)/i);
+  
+  const unanimousCount = unanimousMatch ? parseInt(unanimousMatch[1], 10) : 0;
+  const strongCount = strongMatch ? parseInt(strongMatch[1], 10) : 0;
+  const divergentCount = divergentMatch ? parseInt(divergentMatch[1], 10) : 0;
+  const totalIssues = totalMatch ? parseInt(totalMatch[1], 10) : 
+    unanimousCount + strongCount + divergentCount;
+  
+  return {
+    unanimousCount,
+    strongCount,
+    divergentCount,
+    totalIssues,
+    hasBlockingIssues: unanimousCount > 0,
+  };
 }
 
 export async function checkAllTestsPass(
@@ -2026,6 +2907,119 @@ export async function checkAllTestsPass(
   }
 
   return { passed: true };
+}
+
+/**
+ * Pass-or-fix quality gate with configurable iteration limits.
+ * 
+ * Uses workflowLimits.maxIterations from config (default: 5).
+ * Escalates to user when limit reached.
+ */
+export interface PassOrFixState {
+  currentIteration: number;
+  maxIterations: number;
+  history: Array<{
+    iteration: number;
+    passed: boolean;
+    reason?: string;
+    timestamp: number;
+  }>;
+}
+
+export async function checkPassOrFix(
+  sessionDir: string,
+  config: MagnusOpusConfig,
+  checkFn: () => Promise<GateResult>
+): Promise<GateResult & { state: PassOrFixState }> {
+  const maxIterations = config.workflowLimits?.maxIterations ?? 5;
+  
+  // Load existing state or create new
+  const statePath = join(sessionDir, ".pass-or-fix-state.json");
+  let state: PassOrFixState;
+  
+  try {
+    const stateJson = await readFile(statePath, "utf-8");
+    state = JSON.parse(stateJson);
+  } catch {
+    state = {
+      currentIteration: 0,
+      maxIterations,
+      history: [],
+    };
+  }
+  
+  // Increment iteration
+  state.currentIteration++;
+  
+  // Run the actual check
+  const result = await checkFn();
+  
+  // Record in history
+  state.history.push({
+    iteration: state.currentIteration,
+    passed: result.passed,
+    reason: result.reason,
+    timestamp: Date.now(),
+  });
+  
+  // Save state
+  await writeFile(statePath, JSON.stringify(state, null, 2), "utf-8");
+  
+  // Check if passed
+  if (result.passed) {
+    return { ...result, state };
+  }
+  
+  // Check if max iterations reached
+  if (state.currentIteration >= maxIterations) {
+    return {
+      passed: false,
+      reason: `Max iterations (${maxIterations}) reached. ${result.reason}`,
+      data: {
+        ...result.data,
+        escalation: "USER_DECISION_REQUIRED",
+        options: [
+          "Continue for N more iterations",
+          "Proceed anyway (with known issues)",
+          "Cancel and review",
+        ],
+      },
+      state,
+    };
+  }
+  
+  // Not passed, but more iterations available
+  return {
+    passed: false,
+    reason: `Iteration ${state.currentIteration}/${maxIterations}: ${result.reason}`,
+    data: result.data,
+    state,
+  };
+}
+
+/**
+ * Review rounds gate with configurable limits.
+ * 
+ * Uses workflowLimits.maxReviewRounds from config (default: 3).
+ */
+export async function checkReviewRounds(
+  sessionDir: string,
+  config: MagnusOpusConfig,
+  currentRound: number
+): Promise<{ canContinue: boolean; reason: string }> {
+  const maxRounds = config.workflowLimits?.maxReviewRounds ?? 3;
+  
+  if (currentRound >= maxRounds) {
+    return {
+      canContinue: false,
+      reason: `Max review rounds (${maxRounds}) reached. Escalating to user.`,
+    };
+  }
+  
+  return {
+    canContinue: true,
+    reason: `Review round ${currentRound + 1}/${maxRounds}`,
+  };
 }
 ```
 
@@ -2072,6 +3066,295 @@ export function getAgentsForWorkflow(workflowType: WorkflowType): AgentRouting {
       };
   }
 }
+```
+
+### 6.5 TDD Loop for API_FOCUSED Workflows
+
+<!-- =============================================================================
+WHY: TDD Loop Formalization (DECISIONS.md D025)
+================================================================================
+
+1. MAG PATTERN: 5-STEP TDD LOOP
+   - Write tests → Run → Check → Analyze → Fix → Repeat
+   - Tests written in black-box mode (no implementation access)
+   - Clear classification of TEST_ISSUE vs IMPLEMENTATION_ISSUE
+   - Max iterations configurable via workflowLimits.maxTddIterations
+
+2. BLACK-BOX TEST DESIGN
+   - test-architect writes tests from requirements + API contracts ONLY
+   - No access to implementation details
+   - Ensures tests validate behavior, not implementation
+
+3. ISSUE CLASSIFICATION
+   - TEST_ISSUE: Test is wrong, fix the test
+   - IMPLEMENTATION_ISSUE: Code is wrong, fix the code
+   - Default to IMPLEMENTATION_ISSUE when ambiguous (tests are authoritative)
+
+4. ITERATION LIMITS
+   - Prevents infinite loops
+   - Configurable via workflowLimits.maxTddIterations (default: 10)
+   - Escalate to user when limit reached
+
+============================================================================= -->
+
+```typescript
+// src/workflows/tdd-loop.ts
+import type { MagnusOpusConfig } from "../config/schema";
+import { readFile, writeFile } from "fs/promises";
+import { join } from "path";
+
+export type IssueClassification = "TEST_ISSUE" | "IMPLEMENTATION_ISSUE";
+
+export interface TddIterationResult {
+  iteration: number;
+  testsRun: number;
+  testsPassed: number;
+  testsFailed: number;
+  failureAnalysis?: FailureAnalysis[];
+  classification?: IssueClassification;
+  fixApplied?: string;
+}
+
+export interface FailureAnalysis {
+  testName: string;
+  error: string;
+  classification: IssueClassification;
+  rationale: string;
+  recommendedFix: string;
+}
+
+export interface TddLoopResult {
+  passed: boolean;
+  iterations: TddIterationResult[];
+  totalIterations: number;
+  finalStatus: "ALL_TESTS_PASS" | "MAX_ITERATIONS_REACHED" | "USER_CANCELLED";
+}
+
+/**
+ * Classification criteria for TEST_ISSUE vs IMPLEMENTATION_ISSUE
+ * 
+ * TEST_ISSUE indicators:
+ * - Test expects behavior not mentioned in requirements
+ * - Test checks implementation details (function calls, internal state)
+ * - Test is flaky (sometimes passes, sometimes fails)
+ * - Test setup is incomplete or has bad assertions
+ * - Requirements explicitly state different behavior than test expects
+ * 
+ * IMPLEMENTATION_ISSUE indicators:
+ * - Code doesn't match requirements
+ * - Code violates API contract from architecture
+ * - Code has bugs or missing functionality
+ * - Error conditions not handled
+ * - Edge cases not covered as specified
+ * 
+ * DEFAULT: If ambiguous, classify as IMPLEMENTATION_ISSUE (tests are authoritative)
+ */
+export function classifyFailure(
+  testName: string,
+  error: string,
+  requirements: string,
+  apiContract: string
+): IssueClassification {
+  // This is primarily done by the test-architect agent via prompt
+  // This function provides a fallback heuristic
+  
+  const errorLower = error.toLowerCase();
+  
+  // Likely TEST_ISSUE patterns
+  const testIssuePatterns = [
+    /mock.*not.*configured/i,
+    /timeout.*exceeded/i,
+    /setup.*failed/i,
+    /beforeeach.*error/i,
+    /aftereach.*error/i,
+    /flaky/i,
+    /intermittent/i,
+  ];
+  
+  for (const pattern of testIssuePatterns) {
+    if (pattern.test(error)) {
+      return "TEST_ISSUE";
+    }
+  }
+  
+  // Default to IMPLEMENTATION_ISSUE (tests are authoritative)
+  return "IMPLEMENTATION_ISSUE";
+}
+
+/**
+ * Execute TDD loop for API_FOCUSED workflows
+ * 
+ * Steps:
+ * 1. Write tests (test-architect, black-box, no implementation access)
+ * 2. Run tests
+ * 3. Check results (pass → done, fail → continue)
+ * 4. Analyze failures → classify as TEST_ISSUE or IMPLEMENTATION_ISSUE
+ * 5. Fix appropriate code/test, repeat
+ */
+export async function executeTddLoop(
+  sessionDir: string,
+  config: MagnusOpusConfig,
+  options: {
+    testCommand: string;
+    requirementsPath: string;
+    apiContractPath: string;
+  }
+): Promise<TddLoopResult> {
+  const maxIterations = config.workflowLimits?.maxTddIterations ?? 10;
+  const iterations: TddIterationResult[] = [];
+  
+  let iteration = 0;
+  
+  while (iteration < maxIterations) {
+    iteration++;
+    
+    // Record iteration start
+    const iterationResult: TddIterationResult = {
+      iteration,
+      testsRun: 0,
+      testsPassed: 0,
+      testsFailed: 0,
+    };
+    
+    // Step 2: Run tests
+    // (Actual test execution delegated to agent via Bash)
+    
+    // Step 3: Check if all pass
+    if (iterationResult.testsFailed === 0 && iterationResult.testsRun > 0) {
+      iterations.push(iterationResult);
+      
+      return {
+        passed: true,
+        iterations,
+        totalIterations: iteration,
+        finalStatus: "ALL_TESTS_PASS",
+      };
+    }
+    
+    // Step 4 & 5: Analyze and fix (handled by agents)
+    iterations.push(iterationResult);
+    
+    // Write iteration history
+    await writeIterationHistory(sessionDir, iterations);
+  }
+  
+  // Max iterations reached
+  return {
+    passed: false,
+    iterations,
+    totalIterations: iteration,
+    finalStatus: "MAX_ITERATIONS_REACHED",
+  };
+}
+
+async function writeIterationHistory(
+  sessionDir: string,
+  iterations: TddIterationResult[]
+): Promise<void> {
+  const historyPath = join(sessionDir, "tests", "iteration-history.md");
+  
+  const content = `# TDD Iteration History
+
+${iterations.map((it) => `
+## Iteration ${it.iteration}/${iterations.length}
+
+- Tests run: ${it.testsRun}
+- Passed: ${it.testsPassed}
+- Failed: ${it.testsFailed}
+${it.classification ? `- Classification: ${it.classification}` : ""}
+${it.fixApplied ? `- Fix applied: ${it.fixApplied}` : ""}
+`).join("\n")}
+`;
+  
+  await writeFile(historyPath, content, "utf-8");
+}
+
+/**
+ * TDD Loop orchestration prompt for API_FOCUSED workflows
+ * 
+ * This is injected into the backend agent's workflow when
+ * the workflow type is API_FOCUSED.
+ */
+export const TDD_LOOP_ORCHESTRATION_PROMPT = `
+## TDD Loop for API_FOCUSED Workflow
+
+Follow the 5-step TDD loop until all tests pass or max iterations reached:
+
+### Step 1: Write Tests (Task → test-architect or tester)
+Task: tester
+  Prompt: "Write comprehensive tests for the API based on:
+  - Requirements: \${sessionDir}/requirements.md
+  - API Contract: \${sessionDir}/architecture.md
+
+  CRITICAL CONSTRAINTS:
+  - You have NO access to implementation code
+  - Write tests based ONLY on requirements and API contracts
+  - This ensures true black-box testing
+
+  Write tests to: \${sessionDir}/tests/api.test.ts"
+
+### Step 2: Run Tests
+\`\`\`bash
+cd \${projectDir} && npm test -- --reporter=json > \${sessionDir}/tests/test-results.json 2>&1
+\`\`\`
+
+### Step 3: Check Results
+Read \${sessionDir}/tests/test-results.json
+
+If all tests pass:
+  → TDD loop complete, proceed to code review
+
+If tests fail:
+  → Continue to Step 4
+
+### Step 4: Analyze Failures (Task → test-architect or tester)
+Task: tester
+  Prompt: "Analyze the test failures in \${sessionDir}/tests/test-results.json
+
+  For EACH failure, determine if it's:
+
+  **TEST_ISSUE** (fix the test) - indicators:
+  - Test expects behavior not in requirements
+  - Test checks implementation details
+  - Test is flaky or has setup issues
+  - Requirements say different than test expects
+
+  **IMPLEMENTATION_ISSUE** (fix the code) - indicators:
+  - Code doesn't match requirements
+  - Code violates API contract
+  - Missing functionality or bug
+
+  DEFAULT: If unclear, classify as IMPLEMENTATION_ISSUE
+
+  For TEST_ISSUE classifications, you MUST provide:
+  1. Which requirement the test misinterprets
+  2. How the test should be changed
+  3. Why the implementation is actually correct
+
+  Write analysis to: \${sessionDir}/tests/failure-analysis.md"
+
+### Step 5: Apply Fix
+
+**If TEST_ISSUE:**
+Task: tester
+  Prompt: "Fix the test based on \${sessionDir}/tests/failure-analysis.md
+  Provide justification for each change."
+
+**If IMPLEMENTATION_ISSUE:**
+Task: backend
+  Prompt: "Fix the implementation based on \${sessionDir}/tests/failure-analysis.md
+  Apply minimal changes to make tests pass."
+
+### Repeat
+Return to Step 2. Track iteration count.
+
+### Max Iterations
+If \${maxIterations} iterations reached without all tests passing:
+- Escalate to user with options:
+  1. Continue for N more iterations
+  2. Proceed anyway (with known failures)
+  3. Cancel and review
+`;
 ```
 
 ---
@@ -4713,4 +5996,39 @@ opencode auth login
 mgrep login        # Authenticate with Mixedbread
 mgrep watch        # Start background indexing in project directory
 ```
+
+### 12.7 Using Without Antigravity Auth
+
+If you decline antigravity-auth during installation (or prefer not to use Google OAuth), Magnus Opus still works with OpenCode's built-in free models:
+
+| Model ID | Description | Best For |
+|----------|-------------|----------|
+| `opencode/grok-code` | Code-focused Grok | Fast exploration, code review |
+| `opencode/big-pickle` | Community model | General tasks |
+| `opencode/glm-4.7-free` | Free GLM model | General tasks |
+| `opencode/gpt-5-nano` | Lightweight GPT | Quick responses |
+| `opencode/minimax-m2.1-free` | Free MiniMax | General tasks |
+
+**Limitations without antigravity-auth:**
+- No access to Claude Opus 4.5, Sonnet 4.5 (thinking variants)
+- No access to Gemini 3 Pro/Flash
+- Free models may have rate limits
+- Reduced capabilities for complex orchestration tasks
+
+**Configuration for free models only:**
+
+```json
+{
+  "agents": {
+    "orchestrator": { "model": "opencode/grok-code" },
+    "architect": { "model": "opencode/grok-code" },
+    "reviewer": { "model": "opencode/grok-code" }
+  },
+  "reviewModels": {
+    "codeReview": ["opencode/grok-code", "opencode/big-pickle"]
+  }
+}
+```
+
+For best results, we recommend using antigravity-auth to access Claude and Gemini models.
 
