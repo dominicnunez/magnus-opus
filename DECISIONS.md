@@ -368,3 +368,35 @@ Account for input, output, reasoning, and cached tokens in context calculations.
 Consequences
 - More accurate context window monitoring.
 - Fewer unexpected truncation errors.
+
+---
+
+## Decision 020: Interactive Installer with Companion Tools
+
+Status: Accepted
+Date: 2026-01-18
+
+Context
+Magnus Opus benefits from companion tools that enhance the development experience:
+- **opencode-antigravity-auth**: Provides free Claude/Gemini access via Google OAuth, enabling users to use Magnus Opus's full agent capabilities without separate API subscriptions. This is required for any Google model access in OpenCode.
+- **mgrep**: Semantic code search by Mixedbread that helps agents find relevant code faster than regex-based grep.
+
+These tools are optional but recommended. Installation should be user-friendly while allowing opt-out.
+
+Decision
+Provide an interactive installer (`npx magnus-opus install`) following the oh-my-opencode pattern:
+
+1. **Plugin ordering**: antigravity-auth listed BEFORE magnus-opus in the plugin array (auth must initialize first)
+2. **Model configuration**: Explicitly write all 7 antigravity model definitions to opencode.json (don't rely on auto-registration)
+3. **mgrep delegation**: Let mgrep handle its own OpenCode integration via `mgrep install-opencode` (it manages its own auth, MCP server entry, and tool file)
+4. **Config backup**: Create timestamped backup before modifying opencode.json
+5. **Defaults**: antigravity-auth defaults to Yes; mgrep defaults to Yes but prompts user
+
+Non-interactive mode supported via `--no-tui` with explicit flags.
+
+Consequences
+- Users get a streamlined setup experience with recommended companion tools
+- Config backup prevents accidental data loss
+- Delegating to mgrep avoids maintaining duplicate integration code
+- Plugin ordering ensures correct initialization sequence
+- Google models (both Claude via Antigravity and Gemini) become accessible
