@@ -1,0 +1,108 @@
+{
+  "$schema": "https://btca.dev/btca.schema.json",
+  // "model": "claude-haiku-4-5",
+  // "provider": "anthropic",
+  "model": "grok-code",
+  "provider": "opencode",
+  "resources": [
+    {
+      "name": "opencode",
+      "type": "git",
+      "url": "https://github.com/anomalyco/opencode",
+      "branch": "dev"
+    },
+    {
+      "name": "oh-my-opencode",
+      "type": "git",
+      "url": "https://github.com/code-yeongyu/oh-my-opencode",
+      "branch": "dev"
+    },
+    {
+      "name": "mag-cp",
+      "type": "git",
+      "url": "https://github.com/MadAppGang/claude-code",
+      "branch": "main"
+    },
+    {
+      "name": "sveltekit",
+      "type": "git",
+      "url": "https://github.com/sveltejs/kit",
+      "branch": "main",
+      "specialNotes": "Documentation in 'documentation' folder."
+    },
+    {
+      "name": "svelte",
+      "type": "git",
+      "url": "https://github.com/sveltejs/svelte.dev",
+      "branch": "main",
+      "specialNotes": "Focus on 'content' directory for markdown documentation."
+    },
+    {
+      "name": "shadcn-svelte",
+      "type": "git",
+      "url": "https://github.com/huntabyte/shadcn-svelte",
+      "branch": "main"
+    },
+    {
+      "name": "tailwind",
+      "type": "git",
+      "url": "https://github.com/tailwindlabs/tailwindcss",
+      "branch": "main"
+    },
+    {
+      "name": "convex-backend",
+      "type": "git",
+      "url": "https://github.com/get-convex/convex-backend",
+      "branch": "main",
+      "specialNotes": "Docs in 'npm-packages/docs' folder."
+    },
+    {
+      "name": "convex-js",
+      "type": "git",
+      "url": "https://github.com/get-convex/convex-js",
+      "branch": "main"
+    },
+    {
+      "name": "convex-helpers",
+      "type": "git",
+      "url": "https://github.com/get-convex/convex-helpers",
+      "branch": "main"
+    },
+    {
+      "name": "convex-workos",
+      "type": "git",
+      "url": "https://github.com/get-convex/workos-authkit",
+      "branch": "main"
+    },
+    {
+      "name": "convex-rate-limiter",
+      "type": "git",
+      "url": "https://github.com/get-convex/rate-limiter",
+      "branch": "main"
+    },
+    {
+      "name": "convexStripe",
+      "type": "git",
+      "url": "https://github.com/get-convex/stripe",
+      "branch": "main"
+    },
+    {
+      "name": "zod",
+      "type": "git",
+      "url": "https://github.com/colinhacks/zod",
+      "branch": "main"
+    },
+    {
+      "name": "effect",
+      "type": "git",
+      "url": "https://github.com/Effect-TS/effect",
+      "branch": "main"
+    },
+    {
+      "name": "better-context",
+      "type": "git",
+      "url": "https://github.com/davis7dotsh/better-context",
+      "branch": "main"
+    }
+  ]
+}

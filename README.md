@@ -20,7 +20,7 @@
 
 ### Architecture
 
-Implementation details live in `PLAN.md`. Rationale and policy decisions live in `DECISIONS.md`.
+Implementation details live in `plan/` directory. Rationale and policy decisions live in `DECISIONS.md`.
 
 Magnus Opus follows the **oh-my-opencode plugin pattern**:
 

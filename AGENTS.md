@@ -5,9 +5,9 @@
 Magnus Opus is an OpenCode plugin that brings multi-agent orchestration to SvelteKit + Convex development. This file contains instructions for AI agents working on this codebase.
 
 **Key references:**
-- `PLAN.md` - Detailed implementation specification (3,500+ lines)
+- `plan/` - Detailed implementation specifications (modular files)
 - `README.md` - User-facing documentation
-- `PRD.md` - Product requirements document
+- `DECISIONS.md` - Rationale and policy decisions
 
 ---
 
@@ -66,18 +66,23 @@ btca chat --resource opencode
 
 ---
 
-## Implementation References (in PLAN.md)
+## Implementation References (in plan/ directory)
 
-Implementation details live in `PLAN.md` to keep this file focused on instructions. Use these sections:
+Implementation details live in the `plan/` directory to keep this file focused on instructions. Use these files:
 
-- OpenCode vs MAG implementation differences: **PLAN.md Section 1.4**
-- Agent registration and AgentConfig format: **PLAN.md Section 2**
-- Permission format and model providers: **PLAN.md Sections 2 and 5**
-- Workflow routing and 4-message pattern: **PLAN.md Section 6**
-- Session APIs (including `session.todo`): **PLAN.md Section 7**
-- Hook inventory and hook implementations: **PLAN.md Section 11**
+- OpenCode vs MAG implementation differences: **plan/01-PLATFORM-OVERVIEW.md#section-1.4** (DECISIONS.md D001)
+- Agent registration and AgentConfig format: **plan/02-AGENT-DEFINITIONS.md** (DECISIONS.md D006)
+- Permission format and model providers: **plan/02-AGENT-DEFINITIONS.md** and **plan/05-CONFIG-SCHEMA.md** (DECISIONS.md D009)
+- Workflow routing and 4-message pattern: **plan/06-WORKFLOW-SYSTEM.md** (DECISIONS.md D011)
+- Session APIs (including `session.todo`): **plan/07-SESSION-MANAGEMENT.md** (DECISIONS.md D012)
+- Hook inventory and hook implementations: **plan/11-ADVANCED-HOOKS.md** (DECISIONS.md D017-019)
 
-When porting MAG patterns, confirm OpenCode compatibility using PLAN Section 1.4 before implementing.
+When porting MAG patterns:
+1. Check DECISIONS.md for strategic decisions
+2. Read relevant WHY sections for technical rationale  
+3. Confirm OpenCode compatibility using plan/01-PLATFORM-OVERVIEW.md#section-1.4
+
+The decision index in DECISIONS.md maps all decisions to their implementation files.
 
 ---
 
@@ -89,9 +94,8 @@ Put new files where similar files already exist. Use this structure as the canon
 magnus-opus/
 ├── AGENTS.md              # AI development guidelines (this file)
 ├── DECISIONS.md           # Rationale and policy decisions
-├── PLAN.md                # Implementation specification
+├── plan/                  # Implementation specifications (modular files)
 ├── README.md              # User-facing documentation
-├── PRD.md                 # Product requirements
 ├── flake.nix              # Nix dev shell
 ├── flake.lock             # Nix lockfile
 ├── package.json
@@ -118,16 +122,33 @@ magnus-opus/
 
 ---
 
-## Adding WHY Sections to PLAN.md
+## Documentation Structure
 
-Every major section in PLAN.md should have a WHY comment block explaining the technical rationale. This helps future AI agents (and developers) understand design decisions.
+The project uses a two-part documentation approach for design rationale:
+
+### DECISIONS.md (Strategic Decisions)
+- Records formal project decisions with Context, Decision, and Consequences
+- Each decision has a unique identifier (D001-D032)
+- Maps decisions to plan sections for easy reference
+- Includes decision index by plan section
+
+### WHY Sections (Technical Rationale)
+- HTML comments embedded directly in plan/ files
+- Explain technical implementation choices
+- Located immediately before the code they justify
+- Reference relevant DECISIONS.md entries
+- Include btca research findings with specific sources
+
+## Adding WHY Sections to plan/ Files
+
+Every major section in the plan/ files should have a WHY comment block explaining the technical rationale. This helps future AI agents (and developers) understand design decisions.
 
 **Why this matters:** Magnus Opus ports MAG patterns (Claude Code) to OpenCode, but the platforms differ significantly. MAG had workarounds (`PROXY_MODE`, `tools: {}` format) for limitations that don't exist in OpenCode. WHY sections prevent reimplementing unnecessary workarounds and document which patterns are OpenCode-native vs MAG adaptations.
 
 ### When to Add a WHY Section
 
 Add a WHY section when:
-- Creating a new section in PLAN.md
+- Creating a new section in plan/ files
 - The rationale for a pattern/approach isn't obvious
 - Multiple valid approaches exist and one was chosen
 - The pattern comes from external sources (MAG, oh-my-opencode)
@@ -140,7 +161,7 @@ Use HTML comments so they're visible to AI but don't render in markdown:
 ## X. Section Name
 
 <!-- =============================================================================
-WHY: Section Title (source of research)
+WHY: Section Title (DECISIONS.md Dxxx, source: research-source)
 ================================================================================
 
 1. FIRST KEY DECISION
@@ -156,6 +177,12 @@ WHY: Section Title (source of research)
 
 ### X.1 Subsection
 ```
+
+### Cross-Referencing Guidelines
+
+1. **DECISIONS.md → WHY sections**: Add "Related WHY Sections" field to decisions
+2. **WHY sections → DECISIONS.md**: Always reference decision ID in WHY header
+3. **Maintain bidirectional links**: Update both directions when adding new content
 
 ### Research Process
 
@@ -183,20 +210,20 @@ For each major section, the WHY should cover:
 
 ### Existing WHY Sections
 
-PLAN.md currently has WHY sections in:
-- Section 1 (Platform) - OpenCode vs MAG differences, permission model
-- Section 2 (Agents) - agent architecture design
-- Section 3 (Tools) - command design and separation rationale
-- Section 4 (MCP Servers) - server selection rationale
-- Section 5 (Configuration) - why Zod
-- Section 6 (Workflows) - phase system and quality gates
-- Section 7 (Sessions) - file-based storage rationale
-- Section 8 (Skills) - skills vs direct prompts
-- Section 9 (Context Injection) - ContextCollector pattern
-- Section 10.1 (BackgroundManager) - hybrid completion detection
-- Section 11 (Hooks) - hook system architecture
-- Section 11.2 (Todo Enforcer) - session.status() check
-- Section 11.3 (Token Calculation) - complete token counting
+plan/ files currently have WHY sections in:
+- 01-PLATFORM-OVERVIEW.md#section-1 - OpenCode vs MAG differences, permission model
+- 02-AGENT-DEFINITIONS.md#section-2 - agent architecture design
+- 03-TOOL-DEFINITIONS.md#section-3 - command design and separation rationale
+- 04-MCP-SERVER-DEFINITIONS.md#section-4 - server selection rationale
+- 05-CONFIG-SCHEMA.md#section-5 - why Zod
+- 06-WORKFLOW-SYSTEM.md#section-6 - phase system and quality gates
+- 07-SESSION-MANAGEMENT.md#section-7 - file-based storage rationale
+- 08-SKILLS-SYSTEM.md#section-8 - skills vs direct prompts
+- 09-CONTEXT-COLLECTION-INJECTION.md#section-9 - ContextCollector pattern
+- 10-BACKGROUND-AGENT-SYSTEM.md#section-10.1 - hybrid completion detection
+- 11-ADVANCED-HOOKS.md#section-11 - hook system architecture
+- 11-ADVANCED-HOOKS.md#section-11.2 - Todo Enforcer (session.status() check)
+- 11-ADVANCED-HOOKS.md#section-11.3 - Token Calculation (complete token counting)
 
 Use these as templates for new sections.
 
@@ -232,4 +259,9 @@ For detailed implementation specifications including:
 - Hook implementations
 - Session management patterns
 
-See **PLAN.md** (3,500+ lines of detailed specifications).
+See **plan/** directory (modular files with detailed specifications).
+
+**Documentation Navigation:**
+- **DECISIONS.md** - Strategic decisions and rationale (with index by plan section)
+- **plan/** files - Technical implementations with WHY sections
+- **Bidirectional cross-references** - DECISIONS.md ↔ WHY sections
