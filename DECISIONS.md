@@ -237,16 +237,25 @@ Consequences
 
 Status: Accepted
 Date: 2026-01-19
+Source: btca research (oh-my-opencode)
 
 Context
-Multiple hooks can contribute context to a session, and naive injection risks duplication and ordering issues.
+Multiple hooks can contribute context to a session, and naive injection risks duplication and ordering issues. AI models give more weight to earlier context, so ordering matters for effectiveness.
 
 Decision
 Use a ContextCollector to aggregate contexts before injecting them at the end of the hook pipeline.
 
+Key design choices:
+1. **Priority-based ordering**: Entries sorted by priority (`critical` > `high` > `normal` > `low`), then by timestamp. Critical information (ultrawork mode, safety constraints) appears first where models give it more weight.
+2. **Deduplication via composite key**: Key format `${source}:${id}` allows same ID from different sources (different entries) while same ID from same source overwrites the previous entry.
+3. **Session isolation**: Each session has independent context collection to prevent cross-contamination between conversations.
+4. **Consume-and-clear pattern**: Context is consumed once and cleared after injection to prevent duplicate injection and ensure efficient token usage.
+
 Consequences
 - Context injection is deterministic and deduplicated.
 - Hooks remain decoupled from each other.
+- Most important context appears first in the merged output.
+- No duplicate context wasting limited token space.
 
 ---
 
@@ -254,16 +263,30 @@ Consequences
 
 Status: Accepted
 Date: 2026-01-19
+Source: btca research (oh-my-opencode)
 
 Context
-Background tasks may not always emit clear completion signals; relying on a single signal risks false positives or stuck tasks.
+Background tasks may not always emit clear completion signals; relying on a single signal risks false positives or stuck tasks. No single detection method is reliable due to the asynchronous nature of AI agent sessions—idle events may fire prematurely, late, or not at all; different AI models have varying completion patterns; and network issues can cause false signals.
 
 Decision
 Combine idle-event detection, polling, and stability heuristics to determine completion, and validate output before marking done.
 
+Three-layered detection approach:
+1. **Idle events (primary, fastest)**: Session.idle events provide immediate notification when OpenCode determines a session is idle. Fast path when working correctly.
+2. **Status polling (reliable fallback)**: Poll `session.status()` at regular intervals to catch tasks that complete but don't trigger idle events.
+3. **Stability detection (safety net)**: After `MIN_STABILITY_TIME_MS` (10s), track message count across polls. Require `STABILITY_THRESHOLD` (3) consecutive unchanged polls before declaring complete.
+
+Critical edge guards:
+- **Early idle protection**: `MIN_IDLE_TIME_MS` (5s) prevents completion when idle events fire immediately after session creation.
+- **Output validation**: Verify session has actual assistant/tool output before marking complete.
+- **Todo continuation check**: Wait for incomplete todos that should trigger continuation.
+- **Stale task detection**: Mark tasks as error after `STALE_TIMEOUT_MS` (3 min) of inactivity.
+
 Consequences
-- Fewer false completions.
-- Stuck or silent tasks are handled predictably.
+- Fewer false completions through redundant detection methods.
+- Stuck or silent tasks are handled predictably via stability detection.
+- Fast path available when idle events work correctly.
+- Guaranteed concurrency slot cleanup prevents resource leaks.
 
 ---
 
@@ -288,16 +311,29 @@ Consequences
 
 Status: Accepted
 Date: 2026-01-19
+Source: btca research (oh-my-opencode)
 
 Context
-Hooks operate at different layers (message, tool, system prompt) and must cooperate without order-dependent coupling.
+Hooks operate at different layers (message, tool, system prompt) and must cooperate without order-dependent coupling. Multiple hooks may produce context that needs to be aggregated before injection.
 
 Decision
 Use a layered hook architecture with production hooks early and consumption hooks late.
 
+Hook execution order:
+1. **Production hooks (early)**: Keyword detection, rules loading, directory context discovery. These register context with the ContextCollector.
+2. **Consumption hooks (late)**: Context injection, output truncation. These consume aggregated context and transform outputs.
+
+Hook categories:
+- **Event hooks**: Session lifecycle (`session.created`, `session.deleted`). Used for state initialization and cleanup.
+- **Tool hooks**: Before/after tool execution (`tool.execute.before`, `tool.execute.after`). Used for argument transformation, output truncation, and directory context injection.
+- **Message hooks**: Chat message interception (`chat.message`). Used for agent variant selection and keyword detection.
+- **Transform hooks**: System prompt and message modification (`experimental.chat.system.transform`, `experimental.chat.messages.transform`). Used for skill injection and synthetic context parts.
+
 Consequences
-- Context is collected before injection.
-- Hooks remain composable and predictable.
+- Context is collected before injection, ensuring all sources contribute.
+- Hooks remain composable and predictable without implicit ordering dependencies.
+- Each hook can be disabled independently via `disabled_hooks` config.
+- ContextCollector aggregates and deduplicates across all production hooks.
 
 ---
 

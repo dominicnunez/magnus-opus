@@ -197,7 +197,7 @@ export interface MagnusAgentConfig extends AgentConfig {
 // src/agents/orchestrator.ts
 import type { MagnusAgentConfig } from "./types";
 
-export const DEFAULT_ORCHESTRATOR_MODEL = "anthropic/claude-opus-4";
+export const DEFAULT_ORCHESTRATOR_MODEL = "anthropic/claude-opus-4-5";
 
 const ORCHESTRATOR_PROMPT = `You are the Magnus Opus Orchestrator - a coordinator who NEVER writes code directly.
 
@@ -268,7 +268,7 @@ export const orchestratorAgent = createOrchestratorAgent();
 // src/agents/architect.ts
 import type { MagnusAgentConfig } from "./types";
 
-export const DEFAULT_ARCHITECT_MODEL = "anthropic/claude-sonnet-4";
+export const DEFAULT_ARCHITECT_MODEL = "anthropic/claude-sonnet-4-5";
 
 const ARCHITECT_PROMPT = `You are the Magnus Opus Architect - a technical planner for SvelteKit + Convex projects.
 
@@ -327,7 +327,7 @@ export const architectAgent = createArchitectAgent();
 // src/agents/developer.ts
 import type { MagnusAgentConfig } from "./types";
 
-export const DEFAULT_DEVELOPER_MODEL = "anthropic/claude-sonnet-4";
+export const DEFAULT_DEVELOPER_MODEL = "anthropic/claude-sonnet-4-5";
 
 const DEVELOPER_PROMPT = `You are the Magnus Opus Developer - a SvelteKit expert.
 
@@ -384,7 +384,7 @@ export const developerAgent = createDeveloperAgent();
 // src/agents/backend.ts
 import type { MagnusAgentConfig } from "./types";
 
-export const DEFAULT_BACKEND_MODEL = "anthropic/claude-sonnet-4";
+export const DEFAULT_BACKEND_MODEL = "anthropic/claude-sonnet-4-5";
 
 const BACKEND_PROMPT = `You are the Magnus Opus Backend Agent - a Convex expert.
 
@@ -497,7 +497,7 @@ export const designerAgent = createDesignerAgent();
 // src/agents/ui-developer.ts
 import type { MagnusAgentConfig } from "./types";
 
-export const DEFAULT_UI_DEVELOPER_MODEL = "anthropic/claude-sonnet-4";
+export const DEFAULT_UI_DEVELOPER_MODEL = "anthropic/claude-sonnet-4-5";
 
 const UI_DEVELOPER_PROMPT = `You are the Magnus Opus UI Developer - a specialist in fixing UI issues.
 
@@ -548,7 +548,7 @@ export const uiDeveloperAgent = createUiDeveloperAgent();
 // src/agents/reviewer.ts
 import type { MagnusAgentConfig } from "./types";
 
-export const DEFAULT_REVIEWER_MODEL = "anthropic/claude-sonnet-4";
+export const DEFAULT_REVIEWER_MODEL = "anthropic/claude-sonnet-4-5";
 
 const REVIEWER_PROMPT = `You are the Magnus Opus Code Reviewer.
 
@@ -603,7 +603,7 @@ export const reviewerAgent = createReviewerAgent();
 // src/agents/plan-reviewer.ts
 import type { MagnusAgentConfig } from "./types";
 
-export const DEFAULT_PLAN_REVIEWER_MODEL = "anthropic/claude-sonnet-4";
+export const DEFAULT_PLAN_REVIEWER_MODEL = "anthropic/claude-sonnet-4-5";
 
 const PLAN_REVIEWER_PROMPT = `You are the Magnus Opus Plan Reviewer.
 
@@ -658,7 +658,7 @@ export const planReviewerAgent = createPlanReviewerAgent();
 // src/agents/tester.ts
 import type { MagnusAgentConfig } from "./types";
 
-export const DEFAULT_TESTER_MODEL = "anthropic/claude-3-haiku-20240307";
+export const DEFAULT_TESTER_MODEL = "anthropic/claude-haiku-4-5";
 
 const TESTER_PROMPT = `You are the Magnus Opus Tester.
 
@@ -758,7 +758,7 @@ export const explorerAgent = createExplorerAgent();
 // src/agents/cleaner.ts
 import type { MagnusAgentConfig } from "./types";
 
-export const DEFAULT_CLEANER_MODEL = "anthropic/claude-3-haiku-20240307";
+export const DEFAULT_CLEANER_MODEL = "anthropic/claude-haiku-4-5";
 
 const CLEANER_PROMPT = `You are the Magnus Opus Cleaner.
 
@@ -1144,7 +1144,7 @@ Runs parallel reviews with multiple AI models and consolidates findings.`,
   },
 
   async execute(args, ctx) {
-    const defaultModels = ["anthropic/claude-sonnet-4", "xai/grok-4", "google/gemini-2.5-flash"];
+    const defaultModels = ["anthropic/claude-sonnet-4-5", "opencode/grok-code", "google/gemini-2.5-flash"];
     const models = args.models ?? defaultModels;
 
     ctx.metadata?.({
@@ -1284,7 +1284,7 @@ Config file: ~/.config/opencode/magnus-opus.json
 
 \`\`\`json
 {
-  "agents": { "orchestrator": { "model": "anthropic/claude-opus-4" } },
+  "agents": { "orchestrator": { "model": "anthropic/claude-opus-4-5" } },
   "disabled_agents": [],
   "disabled_mcps": [],
   "reviewModels": {
@@ -1702,9 +1702,9 @@ export async function loadPluginConfig(projectDir: string): Promise<MagnusOpusCo
 
 // Known context window limits by provider/model
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-  "anthropic/claude-opus-4": 200_000,
-  "anthropic/claude-sonnet-4": 200_000,
-  "anthropic/claude-3-haiku-20240307": 200_000,
+  "anthropic/claude-opus-4-5": 200_000,
+  "anthropic/claude-sonnet-4-5": 200_000,
+  "anthropic/claude-haiku-4-5": 200_000,
   "google/gemini-2.5-pro": 1_000_000,
   "google/gemini-2.5-flash": 1_000_000,
   "xai/grok-4": 128_000,
@@ -2677,6 +2677,34 @@ export * from "./injector";
 
 ### 9.0 ContextCollector
 
+<!-- =============================================================================
+WHY: ContextCollector Pattern (DECISIONS.md D014, btca research: oh-my-opencode)
+================================================================================
+
+1. PRIORITY-BASED ORDERING
+   - AI models give more weight to earlier context
+   - Critical information (ultrawork, safety) must appear first
+   - Priority order: critical > high > normal > low
+   - Same priority sorted by timestamp (earlier first)
+
+2. DEDUPLICATION VIA COMPOSITE KEY
+   - Key format: `${source}:${id}`
+   - Same ID from different sources = allowed (different entries)
+   - Same ID from same source = overwrites previous entry
+   - Prevents conflicting duplicate context
+
+3. SESSION ISOLATION
+   - Each session has independent context collection
+   - Prevents cross-contamination between conversations
+   - State cleared on session deletion
+
+4. CONSUME-AND-CLEAR PATTERN
+   - Context consumed once via `consume()` method
+   - Cleared after injection to prevent duplicates
+   - Efficient token usage - no redundant context
+
+============================================================================= -->
+
 The ContextCollector enables dynamic context injection into conversations. This is the same pattern used by oh-my-opencode for keyword detection, rules injection, and hook-based context.
 
 ```typescript
@@ -2839,6 +2867,40 @@ collector.register(parentSessionID, {
 ---
 
 ## 10. Background Agent System (oh-my-opencode Pattern)
+
+<!-- =============================================================================
+WHY: Hybrid Background Completion Detection (DECISIONS.md D015-016, btca research: oh-my-opencode)
+================================================================================
+
+1. NO SINGLE DETECTION METHOD IS RELIABLE
+   - Idle events may fire prematurely, late, or not at all
+   - Different AI models have varying completion patterns
+   - Network issues cause false signals
+   - Race conditions between detection methods
+
+2. THREE-LAYERED DETECTION APPROACH
+   - Idle events (primary): Fastest signal when OpenCode determines session idle
+   - Status polling (fallback): Regular interval checks catch missed events
+   - Stability detection (safety net): 3 consecutive unchanged polls required
+   - Each layer compensates for failures in others
+
+3. CRITICAL EDGE GUARDS
+   - MIN_IDLE_TIME_MS (5s): Prevents early completion on immediate idle
+   - Output validation: Ensures actual assistant output exists
+   - Todo continuation check: Waits for incomplete todos
+   - STALE_TIMEOUT_MS (3 min): Marks stuck tasks as error
+
+4. CONCURRENCY MANAGEMENT
+   - ConcurrencyManager with queue-based slot control
+   - Guaranteed slot release on completion/error/cancellation
+   - Prevents resource leaks from abandoned tasks
+
+5. OPTIONAL SUMMARIZATION (D016)
+   - Large outputs can be summarized to reduce context pressure
+   - Not default - adds latency and cost
+   - Available when needed for heavy outputs
+
+============================================================================= -->
 
 ### 10.1 BackgroundManager
 
@@ -3330,6 +3392,39 @@ Use \`background_output\` to check results when ready.`;
 ---
 
 ## 11. Advanced Hooks (oh-my-opencode Pattern)
+
+<!-- =============================================================================
+WHY: Hook System Architecture (DECISIONS.md D017-019, btca research: oh-my-opencode)
+================================================================================
+
+1. LAYERED EXECUTION ORDER
+   - Production hooks run early: keyword detection, rules loading, directory context
+   - Consumption hooks run late: context injection, output truncation
+   - Order prevents coupling - collectors aggregate before injectors consume
+
+2. HOOK CATEGORIES
+   - Event hooks: Session lifecycle (created, deleted) for state init/cleanup
+   - Tool hooks: Before/after execution for args transform and output processing
+   - Message hooks: Chat interception for variants and keyword detection
+   - Transform hooks: System prompt and message modification (experimental)
+
+3. PROACTIVE SESSION STATUS (D018)
+   - Check session.status() before countdown-based reminders
+   - Prevents noisy reminders when sessions are still active
+   - Cleaner UX during long-running tasks
+
+4. COMPLETE TOKEN ACCOUNTING (D019)
+   - Include input, output, reasoning, and cached tokens
+   - Reasoning tokens (extended thinking) count toward limits
+   - Cache tokens still consume context window
+   - More accurate truncation decisions
+
+5. COMPOSABILITY
+   - Each hook operates independently
+   - ContextCollector aggregates across all production hooks
+   - Hooks can be disabled individually via disabled_hooks config
+
+============================================================================= -->
 
 Rationale for the hook architecture is recorded in `DECISIONS.md` (Decision 017).
 
@@ -4254,73 +4349,8 @@ export function createDirectoryAgentsInjectorHook(ctx: PluginContext) {
 
 ---
 
-## 12. Implementation Order (Updated)
 
-### Phase 1: Foundation (Week 1)
-1. Create project scaffold with all directories
-2. Set up TypeScript + build configuration
-3. Create Zod config schema
-4. Implement plugin entry point with config hook pattern
-5. Implement config loader
-
-### Phase 2: Core Agents (Week 2)
-1. Implement all agent definitions as TypeScript objects
-2. Implement agent aggregation with override support
-3. Test agent injection via config hook
-
-### Phase 3: Tools (Week 2-3)
-1. Implement /help tool
-2. Implement /cleanup tool
-3. Implement /review tool
-4. Implement /validate-ui tool
-5. Implement /implement-api tool
-6. Implement /implement tool (full workflow)
-7. **NEW: Implement delegate_task tool**
-8. **NEW: Implement background_task tool**
-
-### Phase 4: Workflows (Week 3)
-1. Implement workflow type detection
-2. Implement phase system
-3. Implement quality gates
-4. Implement session management
-5. Test workflow routing
-
-### Phase 5: MCP & Skills (Week 4)
-1. Implement built-in MCP definitions
-2. Implement .mcp.json loader
-3. Implement skill definitions
-4. Implement skill loader
-
-### Phase 6: Basic Hooks (Week 4)
-1. Implement event handler
-2. Implement tool.execute.before hook
-3. Implement tool.execute.after hook
-4. Implement context injection
-
-### Phase 7: Background Agent System (Week 5) **NEW**
-1. Implement BackgroundManager class
-2. Implement ConcurrencyManager
-3. Implement background_output and background_cancel tools
-4. Implement background notification hook
-5. Test parallel agent execution
-
-### Phase 8: Advanced Hooks (Week 5-6) **NEW**
-1. Implement todo-continuation-enforcer hook
-2. Implement comment-checker hooks
-3. Implement directory-agents-injector hook
-4. Implement directory-readme-injector hook
-5. Implement context-window-monitor hook
-6. Implement rules-injector hook (optional)
-
-### Phase 9: Polish (Week 6)
-1. Write documentation
-2. Add comprehensive error handling
-3. Add logging
-4. Test edge cases
-
----
-
-## 13. Success Criteria
+## 12. Success Criteria
 
 The plugin is complete when:
 
@@ -4372,8 +4402,8 @@ This plan was reviewed against three goals:
 | AgentConfig tools | Used deprecated `tools: { write: false }` | Use `permission: { write: "deny" }` (permission-only) |
 | PluginInput docs | Only documented `ctx.directory` | Documented all: `client`, `directory`, `project`, `worktree`, `serverUrl`, `$` |
 | Session API | Initially assumed `session.todo()` didn't exist | Confirmed API exists; use native `ctx.client.session.todo()` (see Appendix E) |
-| Model providers | Used `openrouter/grok-4` | Use `xai/grok-4` (direct provider) |
-| Haiku model ID | Used `anthropic/claude-haiku` | Use `anthropic/claude-3-haiku-20240307` |
+| Model providers | Used `openrouter/grok-4` | Use `opencode/grok-code` (available in OpenCode) |
+| Haiku model ID | Used `anthropic/claude-haiku` | Use `anthropic/claude-haiku-4-5` (4.5 series) |
 
 ### Verified Patterns (Correct in Original)
 
@@ -4439,3 +4469,56 @@ Additional patterns added from oh-my-opencode analysis:
 | Legacy tools clarification | Section 1.4 | Use `permission` only, no migration needed |
 | Session API note | AGENTS.md | `session.todo()` API exists for reading todos |
 | btca resource reference | AGENTS.md | Correct resource names for queries |
+
+---
+
+## Appendix F: Available Models (2026-01-18)
+
+Models available in OpenCode for use in agent configurations. Models without dates are aliases pointing to the latest version; dated models are pinned snapshots for reproducibility.
+
+### OpenCode Free/Community Models
+
+| Model ID | Description |
+|----------|-------------|
+| `opencode/big-pickle` | Community model |
+| `opencode/glm-4.7-free` | Free GLM model |
+| `opencode/gpt-5-nano` | Lightweight GPT variant |
+| `opencode/grok-code` | Code-focused Grok |
+| `opencode/minimax-m2.1-free` | Free MiniMax model |
+
+### Anthropic Claude 4.5 Models
+
+| Model ID | Type | Notes |
+|----------|------|-------|
+| `anthropic/claude-haiku-4-5` | Alias | Points to latest Haiku 4.5 |
+| `anthropic/claude-sonnet-4-5` | Alias | Points to latest Sonnet 4.5 |
+| `anthropic/claude-opus-4-5` | Alias | Points to latest Opus 4.5 |
+
+### OpenAI Models
+
+| Model ID | Description |
+|----------|-------------|
+| `openai/gpt-5.2` | Latest GPT-5.2 |
+| `openai/gpt-5.2-codex` | Code-optimized GPT-5.2 |
+
+### Google Models (Requires Auth Setup)
+
+Google models require `google-antigravity` authentication in OpenCode. Once configured:
+
+| Model ID | Description |
+|----------|-------------|
+| `google/gemini-2.5-pro` | Multi-modal, strong for design validation |
+| `google/gemini-2.5-flash` | Fast, cost-effective |
+
+### Model Selection Guidelines
+
+| Use Case | Recommended Model |
+|----------|-------------------|
+| Orchestration | `anthropic/claude-opus-4-5` |
+| Architecture/Planning | `anthropic/claude-sonnet-4-5` |
+| Implementation | `anthropic/claude-sonnet-4-5` |
+| Fast exploration | `anthropic/claude-haiku-4-5` or `opencode/grok-code` |
+| Code review | `anthropic/claude-sonnet-4-5` |
+| Design validation | `google/gemini-2.5-pro` (when available) |
+| Cost-sensitive tasks | `opencode/*` free models or `anthropic/claude-haiku-4-5` |
+
