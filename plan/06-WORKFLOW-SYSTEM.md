@@ -264,14 +264,36 @@ This keeps the code simple while leveraging AI for semantic issue matching.
 
 ```typescript
 // src/workflows/gates.ts
-import type { MagnusOpusConfig } from "../config/schema";
-import { readFile, writeFile } from "fs/promises";
-import { join } from "path";
+import { logger } from "../features/observability";
 
 export interface GateResult {
   passed: boolean;
-  reason?: string;
-  data?: unknown;
+  reason: string;
+  data?: Record<string, unknown>;
+}
+
+export async function checkQualityGate(
+  gateName: string,
+  sessionDir: string,
+  config: MagnusOpusConfig
+): Promise<GateResult> {
+  const gate = QUALITY_GATES[gateName];
+  if (!gate) {
+    return { passed: true, reason: `Gate ${gateName} not defined` };
+  }
+  
+  // Execute gate check
+  // (Delegates to specific gate logic)
+  const result = { passed: true, reason: "Gate passed" }; // Placeholder
+
+  logger.audit(`Quality Gate Decision: ${gateName}`, { 
+    gate: gateName,
+    passed: result.passed, 
+    reason: result.reason,
+    sessionId: extractSessionId(sessionDir)
+  });
+
+  return result;
 }
 
 export type ConsensusLevel = "UNANIMOUS" | "STRONG" | "DIVERGENT";
@@ -790,6 +812,9 @@ export async function executePhase(
   const phase = IMPLEMENT_PHASES[phaseName];
   if (!phase) return;
   
+  const sessionId = extractSessionId(sessionDir);
+  logger.info(`Starting phase: ${phaseName}`, { phase: phaseName, sessionId });
+
   // Pre-phase: git checkpoint if enabled
   if (phase.gitCheckpoint) {
     await createCheckpoint(`before-${phaseName}`, `Starting phase: ${phaseName}`);
@@ -797,7 +822,7 @@ export async function executePhase(
   
   // Pre-phase: state injection if enabled
   if (phase.stateInjection) {
-    injectWorkflowState(extractSessionId(sessionDir), contextCollector);
+    injectWorkflowState(sessionId, contextCollector);
   }
   
   // Execute pre-phase hook
@@ -806,6 +831,7 @@ export async function executePhase(
   }
   
   // Execute actual phase...
+  // (In implementation, this delegates to the specific tool logic)
   
   // Post-phase: git checkpoint if enabled
   if (phase.gitCheckpoint) {
@@ -816,6 +842,8 @@ export async function executePhase(
   if (phase.postPhaseHook) {
     await phase.postPhaseHook();
   }
+
+  logger.info(`Completed phase: ${phaseName}`, { phase: phaseName, sessionId });
 }
 ```
 

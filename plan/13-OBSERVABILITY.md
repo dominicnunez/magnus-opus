@@ -196,7 +196,34 @@ export class StructuredLogger {
     // Reset size counter
     this.currentSize = 0;
   }
+
+  updateConfig(newConfig: Partial<LoggerConfig>): void {
+    this.config = { ...this.config, ...newConfig };
+    this.initializeFileSize();
+  }
 }
+
+// src/features/observability/index.ts
+import { DEFAULT_CONFIG } from "../../config/schema";
+
+// Create singleton logger instance with defaults
+export const logger = new StructuredLogger(DEFAULT_CONFIG.observability || {
+  enabled: false,
+  level: "INFO",
+  file: ".opencode/logs.jsonl",
+  enableConsole: false
+});
+
+export const tracer = new PerformanceTracer();
+
+export function configureObservability(config: LoggerConfig) {
+  logger.updateConfig(config);
+}
+
+export * from "./logger";
+export * from "./structured-logger";
+export * from "./tracer";
+export * from "./hooks";
 ```
 
 ### 13.3 Performance Tracing

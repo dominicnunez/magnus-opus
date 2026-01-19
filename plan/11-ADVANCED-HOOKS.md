@@ -118,6 +118,7 @@ export function createMessagesTransformHook(deps: {
       synthetic: true, // Hidden from UI
     };
 
+
     // Insert before first text part
     const textPartIndex = lastUserMessage.parts.findIndex((p) => p.type === "text");
     if (textPartIndex !== -1) {
@@ -125,97 +126,6 @@ export function createMessagesTransformHook(deps: {
     }
   };
 }
-
-#### Keyword Detector Hook (Production)
-
-Detects keywords in the incoming message and registers context *before* consumption.
-
-```typescript
-// src/hooks/keyword-detector.ts
-import type { ContextCollector } from "../features/context-injector";
-
-// Keywords that trigger special behavior
-const ULTRAWORK_KEYWORDS = ["ultrawork", "ulw"];
-
-export function createKeywordDetectorHook(deps: {
-  contextCollector?: ContextCollector;
-}) {
-  const { contextCollector } = deps;
-  const detectedSessions = new Set<string>();
-
-  return async (
-    input: {},
-    output: {
-      messages: Array<{
-        info: { id: string; sessionID: string; role: string };
-        parts: Array<{ type: string; text?: string }>;
-      }>;
-    }
-  ): Promise<void> => {
-    if (!contextCollector) return;
-
-    // Analyze last user message
-    const lastUserMessage = output.messages.findLast((m) => m.info.role === "user");
-    if (!lastUserMessage) return;
-
-    const sessionID = lastUserMessage.info.sessionID;
-    const messageText = lastUserMessage.parts
-      .filter((p) => p.type === "text" && p.text)
-      .map((p) => p.text)
-      .join("\n")
-      .toLowerCase();
-
-    // Check for ultrawork keywords
-    const hasUltrawork = ULTRAWORK_KEYWORDS.some((kw) => messageText.includes(kw));
-
-    if (hasUltrawork && !detectedSessions.has(sessionID)) {
-      detectedSessions.add(sessionID);
-
-      const ultraworkContext = `
-## ULTRAWORK Mode Active
-
-You are now operating in ULTRAWORK mode. This means:
-
-1. **Aggressive Parallelism**: Use the 4-Message Pattern for all multi-agent work
-   - Message 1: Preparation (Bash only)
-   - Message 2: Parallel execution (Task only - all agents launch simultaneously)
-   - Message 3: Consolidation
-   - Message 4: Present results
-
-2. **Background Agents**: Delegate exploration and research to background agents
-   - Use \`run_in_background: true\` for independent tasks
-   - Don't wait for results unless dependencies exist
-
-3. **TodoWrite Discipline**: 
-   - Create comprehensive todo list upfront
-   - Update status IMMEDIATELY after each step
-   - Never leave tasks half-done
-
-4. **Context Efficiency**:
-   - Use file-based delegation for large outputs
-   - Return brief summaries (2-5 sentences) from sub-agents
-   - Read output files only when needed
-
-5. **Quality Gates**:
-   - User approval after architecture planning
-   - Validation gates with iteration loops
-   - Multi-model review when appropriate
-
-Work relentlessly until ALL tasks are complete.
-`;
-
-      // Register with ContextCollector (Persistent Context)
-      contextCollector.register(sessionID, {
-        id: "ultrawork-mode",
-        source: "keyword-detector",
-        content: ultraworkContext,
-        priority: "critical",
-        persistent: true, // Keep active for session duration
-      });
-    }
-  };
-}
-```
 
 ### 11.2 Chat Message Handler (CRITICAL - was missing from original plan)
 
@@ -366,103 +276,8 @@ event: async (input) => {
 
 
 
-```typescript
-// src/hooks/comment-checker/index.ts
 
-interface PendingCall {
-  filePath: string;
-  content?: string;
-  oldString?: string;
-  newString?: string;
-  tool: "write" | "edit" | "multiedit";
-  sessionID: string;
-  timestamp: number;
-}
 
-const pendingCalls = new Map<string, PendingCall>();
-const PENDING_TTL = 60000; // 60 seconds
-
-export function createCommentCheckerHooks(config?: { custom_prompt?: string }) {
-  // Cleanup old pending calls periodically
-  setInterval(() => {
-    const now = Date.now();
-    for (const [id, call] of pendingCalls) {
-      if (now - call.timestamp > PENDING_TTL) {
-        pendingCalls.delete(id);
-      }
-    }
-  }, 10000);
-
-  return {
-    "tool.execute.before": async (
-      input: { tool: string; sessionID: string; callID: string },
-      output: { args: Record<string, unknown> }
-    ): Promise<void> => {
-      const toolLower = input.tool.toLowerCase();
-      if (!["write", "edit", "multiedit"].includes(toolLower)) return;
-
-      const filePath = (output.args.filePath ?? output.args.file_path ?? output.args.path) as string;
-      if (!filePath) return;
-
-      // Register pending call
-      pendingCalls.set(input.callID, {
-        filePath,
-        content: output.args.content as string | undefined,
-        oldString: (output.args.oldString ?? output.args.old_string) as string | undefined,
-        newString: (output.args.newString ?? output.args.new_string) as string | undefined,
-        tool: toolLower as "write" | "edit" | "multiedit",
-        sessionID: input.sessionID,
-        timestamp: Date.now(),
-      });
-    },
-
-    "tool.execute.after": async (
-      input: { tool: string; callID: string },
-      output: { output: string }
-    ): Promise<void> => {
-      const pending = pendingCalls.get(input.callID);
-      if (!pending) return;
-      pendingCalls.delete(input.callID);
-
-      // Skip if tool failed
-      const outputLower = output.output.toLowerCase();
-      if (outputLower.includes("error:") || outputLower.includes("failed to")) {
-        return;
-      }
-
-      // Analyze for excessive comments
-      const commentIssues = await analyzeComments(pending, config?.custom_prompt);
-      
-      if (commentIssues) {
-        output.output += `\n\n⚠️ Comment Check: ${commentIssues}`;
-      }
-    },
-  };
-}
-
-async function analyzeComments(
-  pending: PendingCall,
-  customPrompt?: string
-): Promise<string | null> {
-  // Simple heuristic: check comment ratio
-  const content = pending.content ?? pending.newString ?? "";
-  const lines = content.split("\n");
-  const commentLines = lines.filter(l => 
-    l.trim().startsWith("//") || 
-    l.trim().startsWith("/*") || 
-    l.trim().startsWith("*") ||
-    l.trim().startsWith("#")
-  );
-  
-  const ratio = commentLines.length / lines.length;
-  
-  if (ratio > 0.3) {
-    return `High comment ratio (${Math.round(ratio * 100)}%). Consider removing obvious comments.`;
-  }
-  
-  return null;
-}
-```
 
 ### 11.5 Directory Agents Injector
 

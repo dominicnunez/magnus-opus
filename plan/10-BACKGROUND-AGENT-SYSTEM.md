@@ -87,14 +87,11 @@ export interface LaunchInput {
   notificationThreshold?: number;    // Notify when this count of tasks complete
 }
 
+import { logger } from "../features/observability";
+
 export class BackgroundManager {
   private tasks = new Map<string, BackgroundTask>();
-  private notifications = new Map<string, BackgroundTask[]>();
-  private pendingByParent = new Map<string, Set<string>>();
-  private client: OpencodeClient;
-  private directory: string;
-  private pollingInterval?: ReturnType<typeof setInterval>;
-  private concurrencyManager: ConcurrencyManager;
+  // ... properties ...
 
   constructor(ctx: { client: OpencodeClient; directory: string; concurrency: ConcurrencyManager }) {
     this.client = ctx.client;
@@ -103,8 +100,14 @@ export class BackgroundManager {
     this.registerProcessCleanup();
   }
 
-async launch(input: LaunchInput): Promise<BackgroundTask> {
+  async launch(input: LaunchInput): Promise<BackgroundTask> {
     const taskId = `bg_${randomUUID().slice(0, 8)}`;
+
+    logger.info("Background task launched", { 
+      taskId, 
+      agent: input.agent, 
+      parentSession: input.parentSessionID 
+    });
 
     await this.concurrencyManager.acquire(input.agent);
 
@@ -342,6 +345,13 @@ private async completeTask(task: BackgroundTask, reason: string): Promise<void> 
     
     task.status = "completed";
     task.completedAt = new Date();
+
+    const durationMs = task.completedAt.getTime() - task.startedAt.getTime();
+    logger.info("Background task completed", { 
+      taskId: task.id, 
+      duration: durationMs,
+      reason 
+    });
 
     if (task.concurrencyKey) {
       this.concurrencyManager.release(task.concurrencyKey);

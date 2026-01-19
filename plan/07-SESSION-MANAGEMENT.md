@@ -73,8 +73,9 @@ export function generateSessionId(
 
 ```typescript
 // src/sessions/directory.ts
-import { existsSync, mkdirSync, rmSync, readdirSync } from "fs";
+import { existsSync, mkdirSync, rmSync, readdirSync, symlinkSync } from "fs";
 import { join } from "path";
+import { logger } from "../features/observability";
 
 const SESSION_BASE_DIR = "ai-docs/sessions";
 
@@ -118,6 +119,7 @@ export async function createSessionDirectory(
     // Ignore symlink errors (Windows without admin rights)
   }
 
+  logger.debug("Session directory created", { path: sessionDir, sessionId });
   return sessionDir;
 }
 

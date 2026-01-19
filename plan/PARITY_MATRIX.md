@@ -213,7 +213,8 @@ This matrix maps MAG (Claude Code) orchestration features to their corresponding
 | Context Persistence | Enhancement | ✅ IMPLEMENTED | `persistent` flag in ContextEntry for re-injection |
 | Skill Content Definitions | Critical | ✅ IMPLEMENTED | Detailed prompts for SvelteKit, Convex, Quality Gates defined in plan/15 |
 | ask_user blocking logic | Critical | ✅ IMPLEMENTED | Orchestrator prompt explicitly instructs to yield turn on ask_user call |
-| Keyword Hook Timing | Critical | ✅ IMPLEMENTED | Ultrawork detection moved to transform hook for immediate injection |
+| Config Schema Parity | Critical | ✅ IMPLEMENTED | Added Observability and Memory schemas to plan/05 |
+| Logger Integration | Enhancement | ✅ IMPLEMENTED | Logger calls injected into workflow, session, and background managers |
 
 ### Core MAG Features Preserved
 - Multi-agent orchestration patterns ✅

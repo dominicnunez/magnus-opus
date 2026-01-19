@@ -86,6 +86,23 @@ export const WorkflowLimitsSchema = z.object({
   maxTddIterations: z.number().min(1).default(10),
 });
 
+// Observability settings
+export const ObservabilitySchema = z.object({
+  enabled: z.boolean().default(false),
+  level: z.enum(["DEBUG", "INFO", "WARN", "ERROR", "AUDIT"]).default("INFO"),
+  file: z.string().default(".opencode/logs.jsonl"),
+  maxSize: z.number().optional(),
+  enableConsole: z.boolean().default(false),
+});
+
+// Memory settings
+export const MemorySchema = z.object({
+  enabled: z.boolean().default(true),
+  maxEntries: z.number().default(1000),
+  cleanupDays: z.number().default(90),
+  autoInject: z.boolean().default(true),
+});
+
 // Main config schema
 export const MagnusOpusConfigSchema = z.object({
   // Agent overrides by name
@@ -108,12 +125,20 @@ export const MagnusOpusConfigSchema = z.object({
   
   // Workflow iteration limits (DECISIONS.md D024)
   workflowLimits: WorkflowLimitsSchema.optional(),
+
+  // Observability configuration
+  observability: ObservabilitySchema.optional(),
+
+  // Memory configuration
+  memory: MemorySchema.optional(),
 });
 
 export type MagnusOpusConfig = z.infer<typeof MagnusOpusConfigSchema>;
 export type AgentOverride = z.infer<typeof AgentOverrideSchema>;
 export type CategoryConfig = z.infer<typeof CategoryConfigSchema>;
 export type WorkflowLimits = z.infer<typeof WorkflowLimitsSchema>;
+export type ObservabilityConfig = z.infer<typeof ObservabilitySchema>;
+export type MemoryConfig = z.infer<typeof MemorySchema>;
 
 // Default configuration
 export const DEFAULT_CONFIG: MagnusOpusConfig = {
@@ -136,6 +161,18 @@ export const DEFAULT_CONFIG: MagnusOpusConfig = {
     maxIterations: 5,
     maxReviewRounds: 3,
     maxTddIterations: 10,
+  },
+  observability: {
+    enabled: false,
+    level: "INFO",
+    file: ".opencode/logs.jsonl",
+    enableConsole: false,
+  },
+  memory: {
+    enabled: true,
+    maxEntries: 1000,
+    cleanupDays: 90,
+    autoInject: true,
   },
 };
 ```

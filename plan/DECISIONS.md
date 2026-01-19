@@ -771,4 +771,27 @@ Consequences
 - Users can run focused workflows without full `/implement` overhead
 - Consistent with MAG's command structure
 - Enables better tooling discoverability
-- Debugger read-only constraint enforces analyze-then-fix pattern
+
+## Decision 033: Remove oh-my-opencode Specific Features
+
+Status: Accepted
+Date: 2026-01-19
+
+Context
+The goal of Magnus Opus is to port MAG concepts to OpenCode, specifically avoiding oh-my-opencode specific features to maintain scope and branding separation.
+- **Ultrawork**: A branded oh-my-opencode feature ("magic keyword" `ulw`) tied to a specific "Ultrawork Manifesto" philosophy not present in MAG.
+- **Comment Checker**: An oh-my-opencode utility for detecting excessive comments, which is not a core MAG quality gate.
+
+Decision
+Remove these features from the v1 plan:
+1. Remove "Keyword Detector Hook" (Ultrawork implementation).
+2. Remove "Comment Checker Hook".
+
+Future Consideration:
+- The "Ultrawork" behavior (aggressive parallelism, background delegation) is valuable. It should be considered for a future release, potentially integrated directly into the default Orchestrator behavior rather than as a hidden "mode" or keyword.
+
+Consequences
+- Strict adherence to "Non-Goal: Not implementing oh-my-opencode specific features".
+- Cleaner scope focused purely on MAG parity.
+- "Ultrawork" concept preserved for future architectural integration.
+
