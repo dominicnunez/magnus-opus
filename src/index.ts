@@ -1,24 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin";
-import { tool } from "@opencode-ai/plugin";
-
-type ToolContext = {
-  sessionID: string;
-  messageID: string;
-  agent: string;
-  metadata(input: { title?: string; metadata?: Record<string, unknown> }): void;
-};
-
-type OpencodeClient = {
-  session: {
-    create(input: { body: { title: string; parentID?: string }; query: { directory: string } }): Promise<{ id?: string; data?: { id?: string } }>;
-    prompt(input: {
-      path: { id: string };
-      body: { agent?: string; parts: Array<{ type: "text"; text: string }> };
-      query: { directory: string };
-    }): Promise<void>;
-    messages(input: { path: { id: string } }): Promise<{ data?: Array<{ info: { role: string }; parts?: Array<{ type: string; text?: string }> }> } | Array<{ info: { role: string }; parts?: Array<{ type: string; text?: string }> }>>;
-  };
-};
+import { tool, type ToolContext } from "@opencode-ai/plugin/tool";
 
 declare const Bun: {
   write(path: string, data: string): Promise<void>;
@@ -52,8 +33,8 @@ const SmokePlugin: Plugin = async (ctx) => {
       prompt: tool.schema.string().default("Return a short confirmation that you ran."),
       agent: tool.schema.string().default("build"),
     },
-    async execute(args, toolCtx: ToolContext) {
-      const client = ctx.client as OpencodeClient;
+    async execute(args: any, toolCtx: ToolContext) {
+      const client = ctx.client as any;
       const sessionResponse = await client.session.create({
         body: { title: args.description, parentID: toolCtx.sessionID },
         query: { directory: ctx.directory },
@@ -104,13 +85,13 @@ const SmokePlugin: Plugin = async (ctx) => {
         return "No background session available.";
       }
 
-      const client = ctx.client as OpencodeClient;
+      const client = ctx.client as any;
       const messagesResponse = await client.session.messages({ path: { id: target } });
       const messages = unwrapData(messagesResponse) ?? [];
       const lastAssistant = messages
-        .filter((msg) => msg.info.role === "assistant")
+        .filter((msg: any) => msg.info.role === "assistant")
         .pop();
-      const text = lastAssistant?.parts?.find((part) => part.type === "text")?.text ?? "(no output yet)";
+      const text = lastAssistant?.parts?.find((part: any) => part.type === "text")?.text ?? "(no output yet)";
 
       return `Background output: ${text}`;
     },
@@ -122,16 +103,16 @@ const SmokePlugin: Plugin = async (ctx) => {
       background_task: backgroundTaskTool,
       background_output: backgroundOutputTool,
     },
-    "chat.message": async (_input, output: { message?: { variant?: string }; parts?: Array<{ type: string; text?: string }> }) => {
+    "chat.message": async (_input, output) => {
       const text = (output.parts ?? [])
-        .filter((part) => part.type === "text" && part.text)
-        .map((part) => part.text)
+        .filter((part) => part.type === "text")
+        .map((part) => (part as any).text || "")
         .join("\n");
 
+      // Note: UserMessage doesn't have variant property in current OpenCode version
+      // This was likely from a different version or example
       if (text.toLowerCase().includes("variant-test")) {
-        if (output.message) {
-          output.message.variant = "high";
-        }
+        console.log("Variant test detected in message");
       }
     },
   };

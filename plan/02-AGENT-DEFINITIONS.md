@@ -179,7 +179,7 @@ export function createArchitectAgent(
       bash: "allow",
     },
     temperature: 0.3, // Low for consistent planning
-    skills: ["quality-gates"],
+    skills: ["quality-gates", "architecture-patterns"],
   };
 }
 
@@ -291,7 +291,7 @@ export function createBackendAgent(
       grep: "allow",
       bash: "allow",
     },
-    skills: ["convex"],
+    skills: ["convex", "error-recovery"],
   };
 }
 
@@ -820,7 +820,7 @@ export function createDevopsAgent(
       type: "enabled",
       budgetTokens: 32000,
     },
-    skills: ["convex"],
+    skills: ["convex", "error-recovery"],
   };
 }
 
@@ -892,7 +892,7 @@ export function createResearcherAgent(
       todowrite: "allow",
       todoread: "allow",
     },
-    skills: ["universal-patterns"],
+    skills: ["universal-patterns", "research-methods", "error-recovery"],
   };
 }
 

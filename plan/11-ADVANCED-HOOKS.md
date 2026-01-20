@@ -188,9 +188,6 @@ export interface ChatMessageHandlerDeps {
   pluginConfig: MagnusOpusConfig;
 }
 
-// Keywords that trigger special behavior
-const ULTRAWORK_KEYWORDS = ["ultrawork", "ulw"];
-
 // Create gate instance (singleton per plugin)
 const firstMessageVariantGate = createFirstMessageVariantGate();
 

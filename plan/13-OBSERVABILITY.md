@@ -1,7 +1,7 @@
 ## 13. Observability System
 
 <!-- =============================================================================
-WHY: Structured Logging Infrastructure (DECISIONS.md D028-D029 deferred)
+WHY: Structured Logging Infrastructure (Accepted Core Feature)
 ================================================================================
 
 1. OPERATIONAL VISIBILITY

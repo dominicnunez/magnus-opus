@@ -342,23 +342,56 @@ npm install package
 
 ```markdown
 # Universal Patterns
-
-## ReAct Pattern
-**Re**asoning + **Act**ing.
-- **Thought**: Analyze the situation.
-- **Action**: Execute a tool.
-- **Observation**: Read the output.
-- **Repeat**.
-
-## The "Yield" Protocol
-When a tool requires user input (e.g., `ask_user`), **STOP GENERATING**.
-- Do not simulate the user.
-- Do not hallucinate the response.
-- Wait for the system to return the actual user input.
-
-## Defensive Coding
-- Validate inputs at boundaries.
-- Handle null/undefined explicitly.
-- Use strict types.
-- Fail fast with clear error messages.
+... (same as above)
 ```
+
+### 15.11 RESEARCH-METHODS.md
+
+```markdown
+# Research Methods & Source Evaluation
+
+## 1. Source Quality Evaluation
+Rate every source as High, Medium, or Low:
+- **High Quality**: Official documentation, academic papers (arXiv), primary sources (RFCs), core API repos.
+- **Medium Quality**: Stack Overflow (high votes), community wikis, technical blogs from established companies.
+- **Low Quality**: Unverified forum posts, single-author blogs without evidence, outdated docs (>3 years).
+
+## 2. Assessment Criteria
+- **Authority**: Is the author/organization a known expert?
+- **Recency**: Is the information still valid for the current tech stack?
+- **Evidence**: Does the source provide code examples, data, or methodological explanations?
+- **Consensus**: Do multiple sources agree? Flag contradictions explicitly.
+
+## 3. Workflow
+1. **Understand**: Parse question, identify key terms.
+2. **Plan**: Define search queries and sources.
+3. **Execute**: Web search and local grep.
+4. **Extract**: Pull relevant info with citations (URL or file path).
+5. **Verify**: Cross-reference across sources.
+6. **Report**: Structured findings with confidence levels.
+```
+
+### 15.12 ARCHITECTURE-PATTERNS.md
+
+```markdown
+# Architecture Patterns & Design Standards
+
+## 1. Agent Templates
+- **Orchestrator**: Coordinates but never writes code. Focus on delegation and quality gates.
+- **Architect/Planner**: Creates technical designs and implementation phases.
+- **Developer/Implementer**: Writes code, applies quality checks (lint/test/type).
+- **Reviewer/Validator**: Read-only assessment with severity levels.
+
+## 2. Core Patterns
+- **Proxy Mode**: Delegate complex tasks to external models via Claudish.
+- **TodoWrite Integration**: Single source of truth for workflow progress.
+- **4-Message Pattern**: Preparation -> Parallel Execution -> Consolidation -> Presentation.
+- **Yield Protocol**: STOP generating when waiting for user input.
+
+## 3. SvelteKit + Convex Design
+- **State**: Use Svelte 5 runes ($state) for local reactivity.
+- **Data**: Use Convex queries for real-time reads, mutations for transactional writes.
+- **Schemas**: Strict v.string() validation in Convex schema.ts.
+- **Components**: Component-first structure with server-side load functions.
+```
+
