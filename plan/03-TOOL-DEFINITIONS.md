@@ -95,16 +95,25 @@ export const implement = tool({
 
 Usage: /implement <feature description>
 
-This command will:
-1. Detect workflow type (UI_FOCUSED, API_FOCUSED, MIXED)
-2. Create a session for artifacts
-3. Plan architecture with the architect agent
-4. Request user approval
-5. Implement with appropriate agents
-6. Run validation (design for UI, TDD for API)
-7. Multi-model code review
-8. Testing
-9. User acceptance`,
+This command automatically detects workflow type and routes to appropriate workflow:
+
+**For UI_FOCUSED or MIXED tasks → /frontend:implement (8 phases):**
+- Phase 1: Architecture Planning (user approval)
+- Phase 2: Implementation
+- Phase 2.5: Design Fidelity Validation (optional, Figma)
+- Phase 3: Triple Review (3.1 senior, 3.2 AI/Codex, 3.3 UI testing)
+- Phase 4: Test Generation (vitest-test-architect)
+- Phase 5: User Final Approval
+- Phase 6: Project Cleanup
+- Phase 7: Final Delivery
+
+**For API_FOCUSED tasks → /dev:implement (6 phases):**
+- Phase 0: Initialize (stack-detector)
+- Phase 1: Skill Confirmation
+- Phase 2: Implementation Planning
+- Phase 3: Implementation
+- Phase 4: Validation (TDD loop)
+- Phase 5: Finalization`,
 
   args: {
     description: tool.schema.string().describe("Feature to implement"),
@@ -173,11 +182,15 @@ export const implementApi = tool({
 
 Usage: /implement-api <api description>
 
-Skips UI phases, focuses on:
-1. Schema design
-2. Query/mutation implementation
-3. Test-driven development
-4. Code review`,
+Forces /dev:implement workflow (6 phases) optimized for backend:
+- Phase 0: Initialize (stack-detector detects Convex)
+- Phase 1: Skill Confirmation (loads Convex skill)
+- Phase 2: Implementation Planning (schema, queries, mutations)
+- Phase 3: Implementation (backend agent)
+- Phase 4: Validation (TDD loop with vitest-test-architect)
+- Phase 5: Finalization
+
+Skips UI-specific phases (design validation, browser testing).`,
 
   args: {
     description: tool.schema.string().describe("API feature to implement"),
@@ -198,11 +211,14 @@ Skips UI phases, focuses on:
 
 **Session Directory:** ${sessionDir}
 
-**Phases:**
-1. Architecture planning (backend agent)
-2. Implementation with TDD loop
-3. Code review
-4. User acceptance
+**Phases (API_FOCUSED subset):**
+- STEP 0/0.1/0.2: Initialize
+- PHASE 1: Architecture planning
+- PHASE 2: Implementation (backend agent)
+- PHASE 2.5-B: TDD loop
+- PHASE 3: Code review (2 reviewers)
+- PHASE 5: User review & cleanup
+- PHASE 6: Final summary
 
 Starting backend architecture planning...
 
@@ -856,6 +872,364 @@ Present summary with documentation location.
 });
 ```
 
+### 3.10 /interview Command
+
+<!-- =============================================================================
+WHY: Structured Requirements Interview (MAG Parity Gap - /dev:interview)
+================================================================================
+
+1. MAG PATTERN: 5-WHYS ELICITATION
+   - MAG has /dev:interview for spec elicitation
+   - Uses structured questioning to gather requirements
+   - Prevents implementation rework from ambiguous prompts
+
+2. ASKUSERQUESTION INTEGRATION
+   - Uses OpenCode's AskUserQuestion tool for structured questioning
+   - Multi-select options with descriptions
+   - Custom input always available
+
+3. OPTIONAL PRE-IMPLEMENTATION PHASE
+   - Can run standalone: /interview <description>
+   - Integrates with /implement: auto-triggers for ambiguous prompts
+   - Skip with --skip-interview flag
+
+============================================================================= -->
+
+```typescript
+// src/tools/interview.ts
+import { tool } from "@opencode-ai/plugin";
+import { generateSessionId, createSessionDirectory } from "../sessions";
+
+export const interview = tool({
+  description: `Structured requirements interview for gathering detailed specifications.
+
+Usage: /interview <brief description>
+
+This command:
+1. Creates an interview session
+2. Asks clarifying questions using AskUserQuestion tool
+3. Generates detailed requirements document
+4. Provides specification for /implement command
+
+Example: /interview create a twitch clone app
+
+The interviewer agent will ask about:
+- Scope and MVP boundaries
+- Core features and functionality
+- UI/UX preferences
+- Technical constraints
+- Data model complexity
+- Authentication needs
+- Integration requirements
+- Success criteria`,
+
+  args: {
+    description: tool.schema.string().describe("Brief description of what to build"),
+    depth: tool.schema.enum(["basic", "detailed", "comprehensive"]).optional()
+      .describe("Interview depth (default: detailed)"),
+    start_implementation: tool.schema.boolean().optional()
+      .describe("Auto-start /implement after interview (default: false)"),
+  },
+
+  async execute(args, ctx) {
+    const sessionId = generateSessionId("interview", args.description);
+    const sessionDir = await createSessionDirectory(sessionId);
+    const depth = args.depth ?? "detailed";
+
+    ctx.metadata?.({
+      title: `/interview: ${args.description.slice(0, 30)}...`,
+      metadata: { sessionId, depth },
+    });
+
+    return `Interview session created: ${sessionId}
+
+**Description:** ${args.description}
+**Depth:** ${depth}
+**Session Directory:** ${sessionDir}
+
+Starting requirements interview...
+
+<system-instruction>
+Use the Task tool to delegate to the interviewer agent with this prompt:
+
+"Conduct a structured requirements interview for: ${args.description}
+
+Session: ${sessionId}
+Depth: ${depth}
+
+Use AskUserQuestion to systematically gather:
+1. Project scope and MVP boundaries
+2. Core features and functionality (use multi-select)
+3. User interface preferences and complexity
+4. Technical stack preferences or constraints
+5. Data model complexity and relationships
+6. Authentication and authorization needs
+7. Performance and scalability requirements
+8. Integration with existing systems
+9. Success criteria and measurable outcomes
+
+Write comprehensive specification to:
+- ${sessionDir}/interview-notes.md (raw interview data)
+- ${sessionDir}/clarified-requirements.md (structured specification)
+
+After interview completes, present findings for user approval.
+${args.start_implementation ? `If approved, continue with /implement using clarified requirements.` : `Provide ready-to-use /implement command with all gathered context.`}"
+</system-instruction>`;
+  },
+});
+```
+
+### 3.10.1 /import-figma Command
+
+<!-- =============================================================================
+WHY: Dedicated Figma Import (MAG Parity Gap - /import-figma)
+================================================================================
+
+1. MAG PATTERN: FIGMA IMPORT WORKFLOW
+   - MAG has dedicated /import-figma command
+   - Uses Figma MCP for design extraction
+   - Generates component stubs from Figma designs
+
+2. DISTINCT FROM /validate-ui
+   - /validate-ui: Compares implementation against design
+   - /import-figma: Extracts designs and generates component shells
+   - One creates, one validates
+
+3. COMPONENT GENERATION
+   - Extracts design tokens (colors, spacing, typography)
+   - Generates SvelteKit component shells
+   - Creates Tailwind CSS class mappings
+
+============================================================================= -->
+
+```typescript
+// src/tools/import-figma.ts
+import { tool } from "@opencode-ai/plugin";
+import { generateSessionId, createSessionDirectory } from "../sessions";
+
+export const importFigma = tool({
+  description: `Import designs from Figma and generate component shells.
+
+Usage: /import-figma <figma_url>
+
+This command:
+1. Fetches design data from Figma via MCP
+2. Extracts design tokens (colors, spacing, typography)
+3. Identifies component structure
+4. Generates SvelteKit component shells with Tailwind classes
+5. Creates design-system.md documentation
+
+Unlike /validate-ui which compares implementation against design,
+/import-figma creates initial component code from designs.`,
+
+  args: {
+    figma_url: tool.schema.string().describe("Figma URL (file, frame, or component)"),
+    output_dir: tool.schema.string().optional()
+      .describe("Output directory for generated components (default: src/lib/components)"),
+    include_tokens: tool.schema.boolean().optional()
+      .describe("Generate design tokens file (default: true)"),
+  },
+
+  async execute(args, ctx) {
+    const sessionId = generateSessionId("figma", "import");
+    const sessionDir = await createSessionDirectory(sessionId);
+    const outputDir = args.output_dir ?? "src/lib/components";
+    const includeTokens = args.include_tokens ?? true;
+
+    ctx.metadata?.({
+      title: `/import-figma`,
+      metadata: { sessionId, figmaUrl: args.figma_url, outputDir },
+    });
+
+    return `Figma import session created: ${sessionId}
+
+**Figma URL:** ${args.figma_url}
+**Output Directory:** ${outputDir}
+**Include Design Tokens:** ${includeTokens}
+
+**Session Directory:** ${sessionDir}
+
+Starting Figma design import...
+
+<system-instruction>
+Use the Task tool to delegate to the designer agent with this prompt:
+
+"Import and extract design components from Figma.
+
+Session: ${sessionId}
+Figma URL: ${args.figma_url}
+
+## Phase 1: Extraction
+Use the Figma MCP to:
+1. Fetch design file metadata
+2. Extract component hierarchy
+3. Identify design tokens:
+   - Color palette (with semantic names)
+   - Typography scale
+   - Spacing values
+   - Border radius values
+   - Shadow definitions
+
+## Phase 2: Analysis
+For each component identified:
+1. Analyze layout structure (flex, grid, etc.)
+2. Map Figma styles to Tailwind classes
+3. Identify variants and states
+4. Note responsive breakpoints
+
+## Phase 3: Generation
+${includeTokens ? `Create design tokens file: ${outputDir}/design-tokens.ts` : ""}
+
+For each component, generate:
+- SvelteKit component shell: ${outputDir}/{ComponentName}.svelte
+- Props interface with variants
+- Base Tailwind classes
+- Placeholder for implementation logic
+
+## Phase 4: Documentation
+Write to: ${sessionDir}/design-import.md
+Include:
+- Component inventory
+- Design token reference
+- Implementation notes
+- Figma to code mapping
+
+Present summary to user with generated files list."
+</system-instruction>`;
+  },
+});
+```
+
+### 3.10.2 /analyze Command
+
+<!-- =============================================================================
+WHY: Deep Codebase Investigation (MAG Parity Gap - /analyze)
+================================================================================
+
+1. MAG PATTERN: CODEBASE DETECTIVE
+   - MAG's Code Analysis plugin has /analyze command
+   - Deep investigation beyond simple grep/glob
+   - Multi-pass analysis with hypothesis tracking
+
+2. EXPLORATION + SYNTHESIS
+   - explorer agent: Fast file finding
+   - analyze: Deep investigation with context
+   - Traces data flow, identifies patterns, maps dependencies
+
+3. USE CASES
+   - "Where is user authentication handled?"
+   - "How does the cart system work?"
+   - "What's the data flow for checkout?"
+
+============================================================================= -->
+
+```typescript
+// src/tools/analyze.ts
+import { tool } from "@opencode-ai/plugin";
+import { generateSessionId, createSessionDirectory } from "../sessions";
+
+export const analyze = tool({
+  description: `Deep codebase investigation and analysis.
+
+Usage: /analyze <question or topic>
+
+This command performs multi-pass codebase investigation:
+1. Initial exploration to identify relevant files
+2. Deep analysis of discovered code
+3. Dependency and data flow tracing
+4. Pattern identification
+5. Comprehensive findings report
+
+More thorough than /explore - use for complex questions about
+how systems work, where things are handled, or architectural understanding.
+
+Examples:
+- /analyze How does user authentication work?
+- /analyze What's the data flow for the checkout process?
+- /analyze Where are API errors handled?`,
+
+  args: {
+    question: tool.schema.string().describe("Question or topic to investigate"),
+    scope: tool.schema.enum(["focused", "broad", "exhaustive"]).optional()
+      .describe("Investigation scope (default: broad)"),
+    include_tests: tool.schema.boolean().optional()
+      .describe("Include test files in analysis (default: false)"),
+  },
+
+  async execute(args, ctx) {
+    const sessionId = generateSessionId("analyze", args.question.slice(0, 20));
+    const sessionDir = await createSessionDirectory(sessionId);
+    const scope = args.scope ?? "broad";
+    const includeTests = args.include_tests ?? false;
+
+    ctx.metadata?.({
+      title: `/analyze: ${args.question.slice(0, 30)}...`,
+      metadata: { sessionId, scope, includeTests },
+    });
+
+    return `Analysis session created: ${sessionId}
+
+**Question:** ${args.question}
+**Scope:** ${scope}
+**Include Tests:** ${includeTests}
+
+**Session Directory:** ${sessionDir}
+
+Starting deep codebase analysis...
+
+<system-instruction>
+Use the Task tool to delegate to the explorer agent with this prompt:
+
+"Conduct deep codebase investigation for: ${args.question}
+
+Session: ${sessionId}
+Scope: ${scope}
+Include Tests: ${includeTests}
+
+## Phase 1: Initial Exploration (Hypothesis Formation)
+1. Identify key terms and concepts from the question
+2. Use Glob to find potentially relevant files
+3. Use Grep to search for key patterns
+4. Form hypotheses about where the answer lies
+5. Track: files found, patterns discovered, initial hypotheses
+
+## Phase 2: Deep Analysis
+For each hypothesis (ranked by likelihood):
+1. Read identified files thoroughly
+2. Trace imports and exports
+3. Follow function call chains
+4. Identify related files discovered during reading
+5. Note: confirmed findings, new questions, eliminated hypotheses
+
+## Phase 3: Dependency Tracing
+1. Map which files depend on which
+2. Identify entry points and consumers
+3. Trace data flow through the system
+4. Document the call graph for relevant functions
+
+## Phase 4: Pattern Recognition
+1. Identify recurring patterns in the codebase
+2. Note conventions being followed
+3. Find similar implementations elsewhere
+4. Document the architectural pattern in use
+
+## Phase 5: Synthesis
+Write comprehensive analysis to: ${sessionDir}/analysis-report.md
+
+Include:
+- Executive Summary (direct answer to question)
+- Detailed Findings with file:line references
+- Data Flow Diagram (text-based)
+- Related Code Locations
+- Patterns and Conventions Found
+- Open Questions (things that need clarification)
+
+Present findings to user with key insights highlighted."
+</system-instruction>`;
+  },
+});
+```
+
 ### 3.15 /help Command
 
 ```typescript
@@ -909,11 +1283,17 @@ ${agentList}`);
     if (topic === "all" || topic === "workflows") {
       sections.push(`## Workflow Types
 
-| Type | Description | Key Agents |
-|------|-------------|------------|
-| UI_FOCUSED | Components, pages, styling | developer, designer, ui-developer |
-| API_FOCUSED | Convex functions, schema | backend, TDD loop |
-| MIXED | Both UI and API | Parallel tracks |`);
+| Type | Description | Workflow | Key Agents |
+|------|-------------|----------|------------|
+| UI_FOCUSED | Components, pages, styling | /frontend:implement (8 phases) | developer, designer, ui-developer, reviewer, codex-reviewer, ui-tester |
+| API_FOCUSED | Convex functions, schema | /dev:implement (6 phases) | backend, stack-detector, vitest-test-architect |
+| MIXED | Both UI and API | /frontend:implement | developer, backend, all reviewers |
+
+### /dev:implement Phases (General Development)
+0. Initialize (stack-detector) → 1. Skill Confirmation → 2. Planning → 3. Implementation → 4. Validation → 5. Finalization
+
+### /frontend:implement Phases (Frontend with Design Validation)
+1. Architecture → 2. Implementation → 2.5. Design Validation → 3. Triple Review → 4. Test Generation → 5-7. Approval/Cleanup/Delivery`);
     }
 
     if (topic === "all" || topic === "config") {
@@ -957,6 +1337,9 @@ import { help } from "./help";
 import { backgroundTask } from "./background-task";
 import { backgroundOutput } from "./background-output";
 import { createDelegateTask } from "./delegate-task";
+import { interview } from "./interview";
+import { importFigma } from "./import-figma";
+import { analyze } from "./analyze";
 
 export const builtinTools = {
   implement,
@@ -972,6 +1355,9 @@ export const builtinTools = {
   "background_output": backgroundOutput,
   "ask_user": askUser,
   resume,
+  interview,
+  "import-figma": importFigma,
+  analyze,
   // delegate_task is created dynamically with BackgroundManager dependency
 };
 
@@ -988,6 +1374,9 @@ export * from "./background-task";
 export * from "./background-output";
 export * from "./ask-user";
 export * from "./resume";
+export * from "./interview";
+export * from "./import-figma";
+export * from "./analyze";
 export { createDelegateTask } from "./delegate-task";
 ```
 
@@ -1228,7 +1617,7 @@ This allows recovery from crashes, restarts, or taking breaks during long workfl
 
 **Status:** ${metadata.status}
 **Current Phase:** ${metadata.currentPhase || "Unknown"}
-**Progress:** ${metadata.completedPhases.length}/10 phases
+**Progress:** ${metadata.completedPhases.length}/12 phases
 
 Session directory: ${sessionDir}
 
